@@ -37,6 +37,12 @@ create table if not exists public.contas_trading (
   ativo boolean not null default false,
   atualizado_em timestamptz not null default timezone('utc', now()),
   criado_em timestamptz not null default timezone('utc', now()),
+  mt5_server text,
+  mt5_password text,
+  server_time timestamptz,
+  mercado_snapshot jsonb,
+  insight_atual text,
+  ultima_sincronizacao timestamptz,
   unique (user_id, numero_conta)
 );
 
@@ -84,7 +90,8 @@ create table if not exists public.configuracoes_sessao (
   limite_operacoes_ativo boolean not null default false,
   limite_operacoes_diaria integer,
   observacoes text,
-  atualizado_em timestamptz not null default timezone('utc', now())
+  atualizado_em timestamptz not null default timezone('utc', now()),
+  timeframe text not null default 'M5'
 );
 
 create table if not exists public.operacoes (
@@ -444,3 +451,9 @@ begin
   end if;
 end
 $$;
+
+create index if not exists idx_contas_trading_numero_conta on public.contas_trading (numero_conta);
+create index if not exists idx_licencas_conta_status_expiracao on public.licencas (conta_trading_id, status, data_expiracao);
+create index if not exists idx_configuracoes_sessao_conta_ligado on public.configuracoes_sessao (conta_trading_id, sistema_ligado, atualizado_em desc);
+create index if not exists idx_operacoes_conta_aberta_em on public.operacoes (conta_trading_id, aberta_em desc);
+create index if not exists idx_operacoes_conta_status on public.operacoes (conta_trading_id, status);

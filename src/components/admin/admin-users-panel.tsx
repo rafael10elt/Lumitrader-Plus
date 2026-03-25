@@ -29,6 +29,7 @@ type ManagedAccount = {
   numero_conta: string;
   mt5_server: string | null;
   mt5_password: string | null;
+  alavancagem: number | null;
 };
 
 const PLAN_OPTIONS = ["Starter", "Pro", "Premium", "Enterprise"];
@@ -87,6 +88,7 @@ export function AdminUsersPanel({ users, licenses, accounts }: { users: ManagedU
                         <Field label="Numero da conta MT5" name="numero_conta" placeholder="12345678" />
                         <Field label="Servidor MT5" name="mt5_server" placeholder="FTMO-Demo" required={false} />
                         <Field label="Senha MT5" name="mt5_password" type="password" placeholder="Senha da conta" required={false} />
+                        <Field label="Alavancagem" name="alavancagem" type="number" placeholder="100" required={false} />
                         <Field label="Valor da licenca (R$)" name="valor" type="number" placeholder="297" required={false} />
                         <Field label="Data de expiracao" name="data_expiracao" type="date" />
                         <SelectField label="Status" name="status" options={LICENSE_STATUS_OPTIONS.filter((item) => item.value !== "expirada")} defaultValue="ativa" />
@@ -106,6 +108,7 @@ export function AdminUsersPanel({ users, licenses, accounts }: { users: ManagedU
                               <Field label="Numero da conta MT5" name="numero_conta" defaultValue={account?.numero_conta ?? ""} />
                               <Field label="Servidor MT5" name="mt5_server" defaultValue={account?.mt5_server ?? ""} required={false} />
                               <Field label="Senha MT5" name="mt5_password" type="password" defaultValue={account?.mt5_password ?? ""} required={false} />
+                              <Field label="Alavancagem" name="alavancagem" type="number" defaultValue={account?.alavancagem != null ? String(account.alavancagem) : ""} required={false} />
                               <Field label="Valor da licenca (R$)" name="valor" type="number" defaultValue={String(license.valor)} />
                               <Field label="Data de expiracao" name="data_expiracao" type="date" defaultValue={license.data_expiracao} />
                               <SelectField label="Status" name="status" options={LICENSE_STATUS_OPTIONS} defaultValue={license.status} />

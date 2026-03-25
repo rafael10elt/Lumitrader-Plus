@@ -15,6 +15,34 @@ function numberValue(formData: FormData, key: string) {
   return Number.isFinite(value) ? value : 0;
 }
 
+function optionalIntegerValue(formData: FormData, key: string) {
+  const raw = textValue(formData, key);
+  if (!raw) {
+    return null;
+  }
+
+  const value = Number(raw);
+  return Number.isFinite(value) ? Math.trunc(value) : null;
+}
+
+function normalizeDateValue(value: string) {
+  if (!value) {
+    return "";
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const match = value.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (match) {
+    const [, day, month, year] = match;
+    return `${year}-${month}-${day}`;
+  }
+
+  return value;
+}
+
 const PLAN_DEFAULTS: Record<string, number> = {
   Starter: 97,
   Pro: 197,
@@ -106,7 +134,8 @@ export async function saveLicense(formData: FormData) {
   const mt5Server = textValue(formData, "mt5_server");
   const mt5Password = textValue(formData, "mt5_password");
   const valorInput = textValue(formData, "valor");
-  const dataExpiracao = textValue(formData, "data_expiracao");
+  const dataExpiracao = normalizeDateValue(textValue(formData, "data_expiracao"));
+  const alavancagem = optionalIntegerValue(formData, "alavancagem");
   const requestedStatus = textValue(formData, "status") || "ativa";
   const nomePlano = textValue(formData, "nome_plano") || "Premium";
   const valor = valorInput ? numberValue(formData, "valor") : (PLAN_DEFAULTS[nomePlano] ?? 297);
@@ -131,6 +160,12 @@ export async function saveLicense(formData: FormData) {
 
   let accountId = existingAccount?.id;
 
+  const accountPayload = {
+    numero_conta: numeroConta,
+    mt5_server: mt5Server || null,
+    alavancagem,
+  } as const;
+
   if (!accountId && licenseId) {
     const { data: licenseAccount } = await adminClient
       .from("licencas")
@@ -140,29 +175,41 @@ export async function saveLicense(formData: FormData) {
 
     if (licenseAccount?.conta_trading_id) {
       accountId = licenseAccount.conta_trading_id;
+      const accountUpdatePayload = mt5Password
+        ? { ...accountPayload, mt5_password: mt5Password }
+        : accountPayload;
+
       await adminClient
         .from("contas_trading")
-        .update({
-          numero_conta: numeroConta,
-          mt5_server: mt5Server || null,
-          mt5_password: mt5Password || null,
-        })
+        .update(accountUpdatePayload)
         .eq("id", accountId);
     }
   }
 
-  if (!accountId) {
+  if (accountId) {
+    const accountUpdatePayload = mt5Password
+      ? { ...accountPayload, mt5_password: mt5Password }
+      : accountPayload;
+
+    const { error: updateAccountError } = await adminClient
+      .from("contas_trading")
+      .update(accountUpdatePayload)
+      .eq("id", accountId);
+
+    if (updateAccountError) {
+      redirect(`/admin?message=${encodeURIComponent(updateAccountError.message)}&type=error`);
+    }
+  } else {
     const { data: createdAccount, error: accountError } = await adminClient
       .from("contas_trading")
       .insert({
         user_id: userId,
         nome_cliente: existingUser?.nome ?? "Cliente Lumitrader",
-        numero_conta: numeroConta,
         corretora: null,
         moeda_codigo: "USD",
         moeda_simbolo: "$",
-        mt5_server: mt5Server || null,
         mt5_password: mt5Password || null,
+        ...accountPayload,
       })
       .select("id")
       .single<{ id: string }>();
@@ -175,7 +222,7 @@ export async function saveLicense(formData: FormData) {
   }
 
   if (licenseId) {
-    await adminClient
+    const { error: licenseUpdateError } = await adminClient
       .from("licencas")
       .update({
         nome_plano: nomePlano,
@@ -184,8 +231,12 @@ export async function saveLicense(formData: FormData) {
         data_expiracao: dataExpiracao,
       })
       .eq("id", licenseId);
+
+    if (licenseUpdateError) {
+      redirect(`/admin?message=${encodeURIComponent(licenseUpdateError.message)}&type=error`);
+    }
   } else {
-    await adminClient.from("licencas").insert({
+    const { error: licenseInsertError } = await adminClient.from("licencas").insert({
       user_id: userId,
       conta_trading_id: accountId,
       nome_plano: nomePlano,
@@ -193,6 +244,10 @@ export async function saveLicense(formData: FormData) {
       valor,
       data_expiracao: dataExpiracao,
     });
+
+    if (licenseInsertError) {
+      redirect(`/admin?message=${encodeURIComponent(licenseInsertError.message)}&type=error`);
+    }
   }
 
   revalidatePath("/admin");
@@ -205,7 +260,7 @@ export async function renewLicense30Days(formData: FormData) {
   const adminClient = createAdminClient();
 
   const licenseId = textValue(formData, "license_id");
-  const currentDate = textValue(formData, "current_expiration");
+  const currentDate = normalizeDateValue(textValue(formData, "current_expiration"));
   await adminClient
     .from("licencas")
     .update({
@@ -239,7 +294,7 @@ export async function updateLicenseStatus(formData: FormData) {
 
   const licenseId = textValue(formData, "license_id");
   const requestedStatus = textValue(formData, "status");
-  const expirationDate = textValue(formData, "data_expiracao");
+  const expirationDate = normalizeDateValue(textValue(formData, "data_expiracao"));
   const status = resolveLicenseStatus(requestedStatus, expirationDate);
 
   await adminClient.from("licencas").update({ status }).eq("id", licenseId);

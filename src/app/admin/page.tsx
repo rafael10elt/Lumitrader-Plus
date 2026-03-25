@@ -49,6 +49,7 @@ type ManagedAccount = {
   numero_conta: string;
   mt5_server: string | null;
   mt5_password: string | null;
+  alavancagem: number | null;
 };
 
 function normalizedLicenseStatus(status: string, expirationDate: string) {
@@ -71,7 +72,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
   const [{ data: users }, { data: licenses }, { data: accounts }] = await Promise.all([
     supabase.from("usuarios").select("id, nome, email, telegram_id, role, acesso_ativo").order("criado_em", { ascending: false }),
     supabase.from("licencas").select("id, user_id, nome_plano, status, valor, data_expiracao, conta_trading_id").order("data_expiracao", { ascending: true }),
-    supabase.from("contas_trading").select("id, user_id, nome_cliente, numero_conta, mt5_server, mt5_password").order("criado_em", { ascending: false }),
+    supabase.from("contas_trading").select("id, user_id, nome_cliente, numero_conta, mt5_server, mt5_password, alavancagem").order("criado_em", { ascending: false }),
   ]);
 
   const expiredIds = (licenses ?? [])
