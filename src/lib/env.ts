@@ -26,12 +26,28 @@ export function getSiteUrl() {
   return process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
 }
 
-export function getServiceRoleKey() {
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+function getRequiredServerEnv(name: string) {
+  const value = process.env[name];
 
-  if (!serviceRoleKey) {
-    throw new Error("Missing required environment variable: SUPABASE_SERVICE_ROLE_KEY");
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
   }
 
-  return serviceRoleKey;
+  return value;
+}
+
+export function getServiceRoleKey() {
+  return getRequiredServerEnv("SUPABASE_SERVICE_ROLE_KEY");
+}
+
+export function getOpenAiApiKey() {
+  return getRequiredServerEnv("OPENAI_API_KEY");
+}
+
+export function getN8nReportWebhookUrl() {
+  return getRequiredServerEnv("N8N_REPORT_WEBHOOK_URL");
+}
+
+export function getIngestToken() {
+  return getRequiredServerEnv("LUMITRADER_INGEST_TOKEN");
 }

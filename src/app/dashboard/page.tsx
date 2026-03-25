@@ -2,6 +2,7 @@
 import { redirect } from "next/navigation";
 import { signout } from "@/app/login/actions";
 import { DashboardRealtime } from "@/components/dashboard/dashboard-realtime";
+import { SignoutButton } from "@/components/auth/signout-button";
 import { requireAuthenticatedUser } from "@/lib/auth";
 
 type DashboardPageProps = {
@@ -59,6 +60,7 @@ export type DashboardAccount = {
 };
 
 export type DashboardConfig = {
+  id?: string;
   conta_trading_id: string;
   ativo: string;
   sistema_ligado: boolean;
@@ -96,6 +98,14 @@ export type DashboardHistoryRow = {
   resultTone: string;
 };
 
+function normalizeLicenseStatus(license: DashboardLicense) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (license.status === "ativa" && license.data_expiracao < today) {
+    return "expirada" as const;
+  }
+  return license.status;
+}
+
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
   const { supabase, profile } = await requireAuthenticatedUser();
   const params = await searchParams;
@@ -117,31 +127,45 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       .order("data_expiracao", { ascending: true }),
   ]);
 
-  const validAccounts = ((accounts ?? []) as DashboardAccount[]).map((account) => ({
-    ...account,
-    license: ((licenses ?? []) as DashboardLicense[]).find((license) => license.conta_trading_id === account.id),
-  })).filter((account) => Boolean(account.license));
+  const validAccounts = ((accounts ?? []) as DashboardAccount[])
+    .map((account) => {
+      const license = ((licenses ?? []) as DashboardLicense[]).find((item) => item.conta_trading_id === account.id);
+      if (!license) {
+        return null;
+      }
+      const normalizedStatus = normalizeLicenseStatus(license);
+      if (normalizedStatus !== "ativa") {
+        return null;
+      }
+      return {
+        ...account,
+        license: {
+          ...license,
+          status: normalizedStatus,
+        },
+      };
+    })
+    .filter(Boolean) as Array<DashboardAccount & { license: DashboardLicense }>;
 
   if (validAccounts.length === 0) {
     if (profile.role === "admin") {
-      return <BlockedState title="Nenhuma conta licenciada para este admin" description="O modulo SaaS ja esta pronto. Agora voce pode cadastrar usuarios e licencas em /admin ou vincular uma conta para teste." canManage />;
+      return <BlockedState title="Nenhuma conta licenciada para este admin" description="Voce ja pode operar o SaaS, mas precisa que a sua propria conta tambem tenha uma licenca ativa se quiser testar o dashboard operacional com o usuario admin." canManage />;
     }
 
     return <BlockedState title="Nenhuma licenca ativa disponivel" description="Este usuario nao possui conta MT5 licenciada no momento. O dashboard fica bloqueado ate que exista ao menos uma licenca valida." canManage={false} />;
   }
 
   const selectedAccount = validAccounts.find((item) => item.id === params.account) ?? validAccounts[0];
-
   if (!selectedAccount) {
     redirect("/dashboard");
   }
 
-  const selectedLicense = selectedAccount.license as DashboardLicense;
+  const selectedLicense = selectedAccount.license;
 
   const [{ data: config }, { data: stats }, { data: operations }] = await Promise.all([
     supabase
       .from("configuracoes_sessao")
-      .select("conta_trading_id, ativo, sistema_ligado, modo, breakeven_ativo, trailing_stop_ativo, horario_inicio, horario_fim, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria")
+      .select("id, conta_trading_id, ativo, sistema_ligado, modo, breakeven_ativo, trailing_stop_ativo, horario_inicio, horario_fim, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria")
       .eq("user_id", profile.id)
       .eq("conta_trading_id", selectedAccount.id)
       .order("atualizado_em", { ascending: false })
@@ -217,9 +241,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         <section className="glass-panel rounded-[32px] p-4 sm:p-6">
           <div className="flex flex-col gap-4 border-b border-white/8 pb-5 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-wrap items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-lime-400/12 text-2xl text-lime-300 glow-ring">
-                L
-              </div>
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-lime-400/12 text-2xl text-lime-300 glow-ring">L</div>
               <div>
                 <p className="font-mono text-xs uppercase tracking-[0.32em] text-cyan-200/70">Plataforma SaaS de Trading</p>
                 <h1 className="font-mono text-2xl font-bold tracking-tight sm:text-3xl">Lumitrader</h1>
@@ -236,17 +258,13 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                   Gestao SaaS
                 </Link>
               ) : null}
-              <form action={signout}>
-                <button className="rounded-[22px] border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-200 transition-colors hover:bg-white/10">
-                  Encerrar sessao
-                </button>
-              </form>
+              <SignoutButton action={signout} className="rounded-[22px] border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-200 transition-colors hover:bg-white/10" />
             </div>
           </div>
 
           <DashboardRealtime
             profile={profile}
-            accounts={validAccounts.map((account) => ({ ...account, license: account.license as DashboardLicense }))}
+            accounts={validAccounts}
             selectedAccountId={selectedAccount.id}
             selectedLicense={selectedLicense}
             account={selectedAccount}
@@ -262,15 +280,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   );
 }
 
-function BlockedState({
-  title,
-  description,
-  canManage,
-}: {
-  title: string;
-  description: string;
-  canManage: boolean;
-}) {
+function BlockedState({ title, description, canManage }: { title: string; description: string; canManage: boolean }) {
   return (
     <main className="min-h-screen px-4 py-6 text-white sm:px-6 lg:px-8">
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-4xl items-center">
@@ -279,13 +289,9 @@ function BlockedState({
           <h1 className="mt-4 text-4xl font-semibold">{title}</h1>
           <p className="mt-4 max-w-2xl text-slate-300">{description}</p>
           <div className="mt-8 flex flex-wrap gap-3">
-            <Link href="/login" className="rounded-[20px] bg-linear-to-r from-lime-500 via-lime-400 to-emerald-400 px-5 py-3 font-semibold text-slate-950">
-              Voltar ao login
-            </Link>
+            <SignoutButton action={signout} label="Voltar ao login" className="rounded-[20px] bg-linear-to-r from-lime-500 via-lime-400 to-emerald-400 px-5 py-3 font-semibold text-slate-950" />
             {canManage ? (
-              <Link href="/admin" className="rounded-[20px] border border-cyan-400/30 bg-cyan-400/10 px-5 py-3 font-semibold text-cyan-100">
-                Abrir gestao SaaS
-              </Link>
+              <Link href="/admin" className="rounded-[20px] border border-cyan-400/30 bg-cyan-400/10 px-5 py-3 font-semibold text-cyan-100">Abrir gestao SaaS</Link>
             ) : null}
           </div>
         </section>

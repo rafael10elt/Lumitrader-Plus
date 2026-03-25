@@ -10,6 +10,7 @@ create table if not exists public.usuarios (
   id uuid primary key references auth.users (id) on delete cascade,
   nome text,
   email text unique,
+  telegram_id text,
   role public.user_role not null default 'user',
   acesso_ativo boolean not null default true,
   ativo_padrao text not null default 'XAUUSD',

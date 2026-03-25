@@ -2,6 +2,7 @@
 
 import { useEffect, useEffectEvent, useState, useTransition } from "react";
 import type { AppUser } from "@/lib/auth";
+import { saveTradingSettings } from "@/app/dashboard/actions";
 import { createClient } from "@/lib/supabase/client";
 import type {
   DashboardAccount,
@@ -89,7 +90,7 @@ export function DashboardRealtime({
         .maybeSingle<DashboardAccount>(),
       supabase
         .from("configuracoes_sessao")
-        .select("conta_trading_id, ativo, sistema_ligado, modo, breakeven_ativo, trailing_stop_ativo, horario_inicio, horario_fim, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria")
+        .select("id, conta_trading_id, ativo, sistema_ligado, modo, breakeven_ativo, trailing_stop_ativo, horario_inicio, horario_fim, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria")
         .eq("conta_trading_id", selectedAccountId)
         .order("atualizado_em", { ascending: false })
         .limit(1)
@@ -200,9 +201,7 @@ export function DashboardRealtime({
                 </option>
               ))}
             </select>
-            <button className="rounded-[18px] border border-cyan-400/30 bg-cyan-400/10 px-4 py-3 text-sm font-semibold text-cyan-100">
-              Trocar conta
-            </button>
+            <button className="rounded-[18px] border border-cyan-400/30 bg-cyan-400/10 px-4 py-3 text-sm font-semibold text-cyan-100">Trocar conta</button>
           </form>
         </div>
       </div>
@@ -222,9 +221,7 @@ export function DashboardRealtime({
                   <p className="font-mono text-xs uppercase tracking-[0.3em] text-cyan-200/70">Controle Central</p>
                   <h2 className="mt-1 text-2xl font-semibold">{isSystemOnline ? "Auto trader armado" : "Sistema aguardando backend operacional"}</h2>
                 </div>
-                <span className="rounded-full border border-lime-400/30 bg-lime-400/10 px-3 py-1 text-sm font-medium text-lime-300">
-                  {isPending ? "Sincronizando" : accountUpdatedLabel}
-                </span>
+                <span className="rounded-full border border-lime-400/30 bg-lime-400/10 px-3 py-1 text-sm font-medium text-lime-300">{isPending ? "Sincronizando" : accountUpdatedLabel}</span>
               </div>
 
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -245,9 +242,7 @@ export function DashboardRealtime({
 
               <div className="mt-4 rounded-[24px] border border-white/8 bg-slate-950/35 p-4">
                 <p className="text-sm text-slate-300">Limite de operacoes por dia</p>
-                <p className="mt-2 text-xl font-semibold">
-                  {liveConfig.limite_operacoes_ativo ? String(liveConfig.limite_operacoes_diaria ?? 0) : "Desativado"}
-                </p>
+                <p className="mt-2 text-xl font-semibold">{liveConfig.limite_operacoes_ativo ? String(liveConfig.limite_operacoes_diaria ?? 0) : "Desativado"}</p>
               </div>
             </div>
 
@@ -270,13 +265,42 @@ export function DashboardRealtime({
 
               <div className="mt-5 rounded-[24px] border border-lime-400/20 bg-lime-400/8 p-4">
                 <p className="text-sm text-lime-200/80">Resultado flutuante</p>
-                <p className="mt-2 text-4xl font-bold text-lime-300">
-                  {floatingProfit >= 0 ? "+" : "-"}
-                  {formatAccountCurrency(Math.abs(floatingProfit), liveAccount)}
-                </p>
+                <p className="mt-2 text-4xl font-bold text-lime-300">{floatingProfit >= 0 ? "+" : "-"}{formatAccountCurrency(Math.abs(floatingProfit), liveAccount)}</p>
                 <p className="mt-2 text-sm text-slate-300">Nivel de margem: {liveAccount.nivel_margem ?? 0}%.</p>
               </div>
             </div>
+          </div>
+
+          <div className="glass-panel rounded-[28px] p-5">
+            <p className="font-mono text-xs uppercase tracking-[0.28em] text-cyan-200/70">Parametros desta conta</p>
+            <form className="mt-4 grid gap-4 md:grid-cols-2">
+              <input type="hidden" name="config_id" value={liveConfig.id ?? ""} />
+              <input type="hidden" name="conta_trading_id" value={selectedAccountId} />
+              <SettingsField label="Ativo" name="ativo" defaultValue={liveConfig.ativo} />
+              <label className="grid gap-2">
+                <span className="text-sm text-slate-300">Modo</span>
+                <select name="modo" defaultValue={liveConfig.modo} className="rounded-[18px] border border-white/10 bg-slate-950/50 px-4 py-3 text-white outline-none">
+                  <option value="agressivo">Agressivo</option>
+                  <option value="conservador">Conservador</option>
+                </select>
+              </label>
+              <SettingsField label="Horario inicio" name="horario_inicio" type="time" defaultValue={liveConfig.horario_inicio.slice(0, 5)} />
+              <SettingsField label="Horario fim" name="horario_fim" type="time" defaultValue={liveConfig.horario_fim.slice(0, 5)} />
+              <SettingsField label="Meta diaria" name="meta_lucro_diaria" type="number" defaultValue={String(liveConfig.meta_lucro_diaria)} />
+              <SettingsField label="Perda maxima diaria" name="perda_maxima_diaria" type="number" defaultValue={String(liveConfig.perda_maxima_diaria)} />
+              <SettingsField label="Limite de operacoes" name="limite_operacoes_diaria" type="number" defaultValue={String(liveConfig.limite_operacoes_diaria ?? "")} />
+              <div className="grid gap-3 rounded-[18px] border border-white/8 bg-slate-950/35 p-4">
+                <CheckBox label="Sistema ligado" name="sistema_ligado" defaultChecked={liveConfig.sistema_ligado} />
+                <CheckBox label="Breakeven ativo" name="breakeven_ativo" defaultChecked={liveConfig.breakeven_ativo} />
+                <CheckBox label="Trailing stop ativo" name="trailing_stop_ativo" defaultChecked={liveConfig.trailing_stop_ativo} />
+                <CheckBox label="Limite de operacoes ativo" name="limite_operacoes_ativo" defaultChecked={liveConfig.limite_operacoes_ativo} />
+              </div>
+              <div className="md:col-span-2 flex justify-end">
+                <button formAction={saveTradingSettings} className="rounded-[18px] bg-linear-to-r from-lime-500 via-lime-400 to-emerald-400 px-5 py-3 text-sm font-semibold text-slate-950">
+                  Salvar parametros
+                </button>
+              </div>
+            </form>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -319,10 +343,7 @@ export function DashboardRealtime({
           <p className="font-mono text-xs uppercase tracking-[0.3em] text-cyan-200/70">Insights Operacionais</p>
           <div className="mt-5 grid gap-3">
             {insights.map((insight) => (
-              <div key={insight} className="rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-100">
-                <span className="mr-3 text-lime-300">✓</span>
-                {insight}
-              </div>
+              <div key={insight} className="rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-100"><span className="mr-3 text-lime-300">✓</span>{insight}</div>
             ))}
           </div>
         </div>
@@ -373,61 +394,35 @@ export function DashboardRealtime({
 }
 
 function HeaderPill({ label, value, online = false }: { label: string; value: string; online?: boolean }) {
-  return (
-    <div className="rounded-[24px] border border-white/8 bg-white/4 px-4 py-3">
-      <p className="text-xs uppercase tracking-[0.22em] text-slate-400">{label}</p>
-      <div className="mt-2 flex items-center gap-2 text-lg font-semibold">
-        {online ? <span className="h-2.5 w-2.5 rounded-full bg-lime-400 shadow-[0_0_18px_rgba(157,232,51,0.9)]" /> : null}
-        <span>{value}</span>
-      </div>
-    </div>
-  );
+  return <div className="rounded-[24px] border border-white/8 bg-white/4 px-4 py-3"><p className="text-xs uppercase tracking-[0.22em] text-slate-400">{label}</p><div className="mt-2 flex items-center gap-2 text-lg font-semibold">{online ? <span className="h-2.5 w-2.5 rounded-full bg-lime-400 shadow-[0_0_18px_rgba(157,232,51,0.9)]" /> : null}<span>{value}</span></div></div>;
 }
 
 function InfoCard({ eyebrow, title, detail }: { eyebrow: string; title: string; detail: string }) {
-  return (
-    <div className="rounded-[24px] border border-white/8 bg-white/4 p-4">
-      <p className="font-mono text-xs uppercase tracking-[0.26em] text-cyan-200/70">{eyebrow}</p>
-      <p className="mt-3 text-xl font-semibold">{title}</p>
-      <p className="mt-2 text-sm text-slate-400">{detail}</p>
-    </div>
-  );
+  return <div className="rounded-[24px] border border-white/8 bg-white/4 p-4"><p className="font-mono text-xs uppercase tracking-[0.26em] text-cyan-200/70">{eyebrow}</p><p className="mt-3 text-xl font-semibold">{title}</p><p className="mt-2 text-sm text-slate-400">{detail}</p></div>;
 }
 
 function ToggleCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between rounded-[24px] border border-white/8 bg-slate-950/40 px-4 py-3">
-      <span className="text-lg">{label}</span>
-      <span className="rounded-full bg-lime-400/12 px-3 py-1 text-sm font-semibold text-lime-300">{value}</span>
-    </div>
-  );
+  return <div className="flex items-center justify-between rounded-[24px] border border-white/8 bg-slate-950/40 px-4 py-3"><span className="text-lg">{label}</span><span className="rounded-full bg-lime-400/12 px-3 py-1 text-sm font-semibold text-lime-300">{value}</span></div>;
 }
 
 function QuickFact({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</p>
-      <p className="mt-2 text-lg font-semibold">{value}</p>
-    </div>
-  );
+  return <div><p className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</p><p className="mt-2 text-lg font-semibold">{value}</p></div>;
 }
 
 function DataRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between border-b border-white/6 pb-3 last:border-b-0 last:pb-0">
-      <span className="text-slate-400">{label}</span>
-      <span className="font-semibold">{value}</span>
-    </div>
-  );
+  return <div className="flex items-center justify-between border-b border-white/6 pb-3 last:border-b-0 last:pb-0"><span className="text-slate-400">{label}</span><span className="font-semibold">{value}</span></div>;
 }
 
 function StatRow({ label, value, valueTone = "text-white" }: { label: string; value: string; valueTone?: string }) {
-  return (
-    <div className="flex items-center justify-between rounded-[24px] border border-white/8 bg-white/4 px-4 py-4">
-      <span className="text-slate-300">{label}</span>
-      <span className={`text-xl font-semibold ${valueTone}`}>{value}</span>
-    </div>
-  );
+  return <div className="flex items-center justify-between rounded-[24px] border border-white/8 bg-white/4 px-4 py-4"><span className="text-slate-300">{label}</span><span className={`text-xl font-semibold ${valueTone}`}>{value}</span></div>;
+}
+
+function SettingsField({ label, name, defaultValue, type = "text" }: { label: string; name: string; defaultValue: string; type?: string }) {
+  return <label className="grid gap-2"><span className="text-sm text-slate-300">{label}</span><input name={name} type={type} defaultValue={defaultValue} className="rounded-[18px] border border-white/10 bg-slate-950/50 px-4 py-3 text-white outline-none" /></label>;
+}
+
+function CheckBox({ label, name, defaultChecked }: { label: string; name: string; defaultChecked: boolean }) {
+  return <label className="flex items-center gap-3 text-sm text-slate-200"><input type="checkbox" name={name} defaultChecked={defaultChecked} className="h-4 w-4 rounded border-white/20 bg-slate-950/60" />{label}</label>;
 }
 
 function CandlestickChart({ candles, currencySymbol }: { candles: Candle[]; currencySymbol: string }) {
@@ -440,11 +435,7 @@ function CandlestickChart({ candles, currencySymbol }: { candles: Candle[]; curr
 
   return (
     <div className="grid-sheen relative mt-5 h-[420px] overflow-hidden rounded-[28px] border border-white/8 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.12),transparent_28%),linear-gradient(180deg,rgba(5,11,21,0.95),rgba(3,8,16,0.98))] p-4">
-      <div className="absolute inset-x-4 top-6 flex justify-between text-xs text-slate-500">
-        <span>{currencySymbol} {max.toFixed(2)}</span>
-        <span>{currencySymbol} {((max + min) / 2).toFixed(2)}</span>
-        <span>{currencySymbol} {min.toFixed(2)}</span>
-      </div>
+      <div className="absolute inset-x-4 top-6 flex justify-between text-xs text-slate-500"><span>{currencySymbol} {max.toFixed(2)}</span><span>{currencySymbol} {((max + min) / 2).toFixed(2)}</span><span>{currencySymbol} {min.toFixed(2)}</span></div>
       <div className="absolute inset-x-4 bottom-5 top-12 flex items-end gap-2">
         {candles.map((candle, index) => {
           const wickTop = ((max - candle.high) / range) * 100;
@@ -452,25 +443,12 @@ function CandlestickChart({ candles, currencySymbol }: { candles: Candle[]; curr
           const bodyTop = ((max - Math.max(candle.open, candle.close)) / range) * 100;
           const bodyHeight = Math.max((Math.abs(candle.open - candle.close) / range) * 100, 1.8);
           const isBull = candle.close >= candle.open;
-
-          return (
-            <div key={`${candle.open}-${candle.close}-${index}`} className="relative flex h-full flex-1 items-center justify-center">
-              <div className="absolute w-[2px] rounded-full bg-slate-300/60" style={{ top: `${wickTop}%`, height: `${wickHeight}%` }} />
-              <div className={`absolute w-4 rounded-[4px] ${isBull ? "border border-lime-300/90 bg-lime-400/85" : "border border-red-300/90 bg-red-400/85"}`} style={{ top: `${bodyTop}%`, height: `${bodyHeight}%` }} />
-            </div>
-          );
+          return <div key={`${candle.open}-${candle.close}-${index}`} className="relative flex h-full flex-1 items-center justify-center"><div className="absolute w-[2px] rounded-full bg-slate-300/60" style={{ top: `${wickTop}%`, height: `${wickHeight}%` }} /><div className={`absolute w-4 rounded-[4px] ${isBull ? "border border-lime-300/90 bg-lime-400/85" : "border border-red-300/90 bg-red-400/85"}`} style={{ top: `${bodyTop}%`, height: `${bodyHeight}%` }} /></div>;
         })}
       </div>
       <div className="absolute inset-x-6 top-24 h-px border-t border-dashed border-lime-400/40" />
-      <div className="absolute right-4 top-4 rounded-2xl border border-white/8 bg-slate-950/70 px-3 py-2 text-right">
-        <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Preco</p>
-        <p className="mt-1 text-xl font-bold text-lime-300">{currencySymbol} {last.close.toFixed(2)}</p>
-      </div>
-      <div className="absolute bottom-4 left-4 max-w-[260px] rounded-[24px] border border-white/8 bg-slate-950/75 p-4">
-        <p className="text-lg font-semibold">Candle atual</p>
-        <p className="mt-3 text-sm text-slate-300">Abertura {currencySymbol} {last.open.toFixed(2)}</p>
-        <p className="mt-1 text-sm text-slate-300">Max {currencySymbol} {last.high.toFixed(2)} / Min {currencySymbol} {last.low.toFixed(2)}</p>
-      </div>
+      <div className="absolute right-4 top-4 rounded-2xl border border-white/8 bg-slate-950/70 px-3 py-2 text-right"><p className="text-xs uppercase tracking-[0.25em] text-slate-400">Preco</p><p className="mt-1 text-xl font-bold text-lime-300">{currencySymbol} {last.close.toFixed(2)}</p></div>
+      <div className="absolute bottom-4 left-4 max-w-[260px] rounded-[24px] border border-white/8 bg-slate-950/75 p-4"><p className="text-lg font-semibold">Candle atual</p><p className="mt-3 text-sm text-slate-300">Abertura {currencySymbol} {last.open.toFixed(2)}</p><p className="mt-1 text-sm text-slate-300">Max {currencySymbol} {last.high.toFixed(2)} / Min {currencySymbol} {last.low.toFixed(2)}</p></div>
     </div>
   );
 }

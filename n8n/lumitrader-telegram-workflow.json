@@ -1,0 +1,180 @@
+﻿{
+  "name": "Lumitrader Telegram Reports",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lumitrader-report",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-lumitrader-report",
+      "name": "Lumitrader Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const report = $json;\nconst isClosed = report.event === 'operation_closed';\nconst emoji = isClosed ? '📕' : '📘';\nconst direction = report.operation.side === 'buy' ? 'Compra' : 'Venda';\nconst pnl = Number(report.operation.profit_loss ?? 0);\nconst pnlSignal = pnl >= 0 ? '+' : '-';\nconst pnlAbs = Math.abs(pnl).toFixed(2);\nconst currency = report.account.currency_symbol ?? '$';\nconst telegramId = report.user.telegram_id;\nconst lines = [\n  `${emoji} Lumitrader | ${isClosed ? 'Operacao encerrada' : 'Operacao aberta'}`,\n  `Cliente: ${report.user.nome ?? report.user.email ?? 'Cliente'}`,\n  `Conta MT5: ${report.account.number}`,\n  `Plano: ${report.account.active_license.plan} (${report.account.active_license.status})`,\n  `Ativo: ${report.operation.symbol} ${report.operation.timeframe}`,\n  `Direcao: ${direction}`,\n  `Lote: ${report.operation.lot}`,\n  `Entrada: ${report.operation.entry_price}`,\n  report.operation.exit_price ? `Saida: ${report.operation.exit_price}` : null,\n  `Saldo: ${currency} ${Number(report.account.balance ?? 0).toFixed(2)}`,\n  `Equity: ${currency} ${Number(report.account.equity ?? 0).toFixed(2)}`,\n  `Resultado: ${pnlSignal}${currency} ${pnlAbs}`,\n  `Risco: ${currency} ${Number(report.risk.riskAmount ?? 0).toFixed(2)}`,\n  report.risk.rewardAmount != null ? `Alvo estimado: ${currency} ${Number(report.risk.rewardAmount).toFixed(2)}` : null,\n  report.ai?.summary ? `IA: ${report.ai.summary}` : null\n].filter(Boolean);\n\nreturn [{\n  json: {\n    ok: true,\n    telegram_id: telegramId,\n    text: lines.join('\\n')\n  }\n}];"
+      },
+      "id": "format-telegram-message",
+      "name": "Formatar mensagem",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.telegram_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-telegram-id",
+      "name": "Tem Telegram ID?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env.TELEGRAM_BOT_TOKEN}}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": $json.telegram_id,\n  \"text\": $json.text\n}",
+        "options": {}
+      },
+      "id": "send-telegram-message",
+      "name": "Enviar Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1020,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"ok\": true,\n  \"delivered\": true,\n  \"telegram_id\": $json.telegram_id\n}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Responder sucesso",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.3,
+      "position": [
+        1260,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"ok\": true,\n  \"delivered\": false,\n  \"reason\": \"telegram_id_nao_configurado\"\n}",
+        "options": {}
+      },
+      "id": "respond-no-telegram",
+      "name": "Responder sem Telegram",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.3,
+      "position": [
+        1020,
+        420
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Lumitrader Webhook": {
+      "main": [
+        [
+          {
+            "node": "Formatar mensagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatar mensagem": {
+      "main": [
+        [
+          {
+            "node": "Tem Telegram ID?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem Telegram ID?": {
+      "main": [
+        [
+          {
+            "node": "Enviar Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder sem Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar Telegram": {
+      "main": [
+        [
+          {
+            "node": "Responder sucesso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "7d1a35f0-0f32-47b4-8d8b-784f9f2c0a0f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "lumitrader"
+  },
+  "id": "lumitrader-telegram-reports",
+  "tags": []
+}

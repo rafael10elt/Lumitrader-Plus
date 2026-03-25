@@ -15,6 +15,31 @@ function numberValue(formData: FormData, key: string) {
   return Number.isFinite(value) ? value : 0;
 }
 
+const PLAN_DEFAULTS: Record<string, number> = {
+  Starter: 97,
+  Pro: 197,
+  Premium: 297,
+  Enterprise: 497,
+};
+
+function resolveLicenseStatus(status: string, expirationDate: string) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (status === "ativa" && expirationDate < today) {
+    return "expirada";
+  }
+  return status;
+}
+
+function nextExpirationDate(currentDate: string) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const parsedCurrent = currentDate ? new Date(`${currentDate}T00:00:00`) : null;
+  const base = parsedCurrent && parsedCurrent > today ? parsedCurrent : today;
+  base.setDate(base.getDate() + 30);
+  return base.toISOString().slice(0, 10);
+}
+
 export async function createManagedUser(formData: FormData) {
   await requireAdminUser();
   const adminClient = createAdminClient();
@@ -22,6 +47,7 @@ export async function createManagedUser(formData: FormData) {
   const nome = textValue(formData, "nome");
   const email = textValue(formData, "email");
   const password = textValue(formData, "password");
+  const telegramId = textValue(formData, "telegram_id");
 
   if (!nome || !email || !password) {
     redirect("/admin?message=Preencha+nome%2C+email+e+senha.&type=error");
@@ -45,6 +71,7 @@ export async function createManagedUser(formData: FormData) {
     .update({
       nome,
       email,
+      telegram_id: telegramId || null,
       role: "user",
       acesso_ativo: true,
     })
@@ -54,24 +81,44 @@ export async function createManagedUser(formData: FormData) {
   redirect("/admin?message=Usuario+criado+com+sucesso.&type=success");
 }
 
-export async function saveLicense(formData: FormData) {
+export async function updateManagedUser(formData: FormData) {
   await requireAdminUser();
   const adminClient = createAdminClient();
 
   const userId = textValue(formData, "user_id");
-  const nomeCliente = textValue(formData, "nome_cliente");
-  const numeroConta = textValue(formData, "numero_conta");
-  const corretora = textValue(formData, "corretora");
-  const moedaCodigo = textValue(formData, "moeda_codigo") || "USD";
-  const moedaSimbolo = textValue(formData, "moeda_simbolo") || "$";
-  const valor = numberValue(formData, "valor");
-  const dataExpiracao = textValue(formData, "data_expiracao");
-  const status = textValue(formData, "status") || "ativa";
-  const nomePlano = textValue(formData, "nome_plano") || "Licenca Padrao";
+  const nome = textValue(formData, "nome");
+  const email = textValue(formData, "email");
+  const telegramId = textValue(formData, "telegram_id");
 
-  if (!userId || !nomeCliente || !numeroConta || !dataExpiracao) {
-    redirect("/admin?message=Preencha+usuario%2C+cliente%2C+conta+e+expiracao.&type=error");
+  await adminClient.from("usuarios").update({ nome, email, telegram_id: telegramId || null }).eq("id", userId);
+
+  revalidatePath("/admin");
+  redirect("/admin?message=Dados+do+usuario+atualizados.&type=success");
+}
+
+export async function saveLicense(formData: FormData) {
+  await requireAdminUser();
+  const adminClient = createAdminClient();
+
+  const licenseId = textValue(formData, "license_id");
+  const userId = textValue(formData, "user_id");
+  const numeroConta = textValue(formData, "numero_conta");
+  const valorInput = textValue(formData, "valor");
+  const dataExpiracao = textValue(formData, "data_expiracao");
+  const requestedStatus = textValue(formData, "status") || "ativa";
+  const nomePlano = textValue(formData, "nome_plano") || "Premium";
+  const valor = valorInput ? numberValue(formData, "valor") : (PLAN_DEFAULTS[nomePlano] ?? 297);
+  const status = resolveLicenseStatus(requestedStatus, dataExpiracao);
+
+  if (!userId || !numeroConta || !dataExpiracao) {
+    redirect("/admin?message=Preencha+usuario%2C+numero+da+conta+e+expiracao.&type=error");
   }
+
+  const { data: existingUser } = await adminClient
+    .from("usuarios")
+    .select("nome")
+    .eq("id", userId)
+    .maybeSingle<{ nome: string | null }>();
 
   const { data: existingAccount } = await adminClient
     .from("contas_trading")
@@ -82,26 +129,32 @@ export async function saveLicense(formData: FormData) {
 
   let accountId = existingAccount?.id;
 
-  if (accountId) {
-    await adminClient
-      .from("contas_trading")
-      .update({
-        nome_cliente: nomeCliente,
-        corretora: corretora || null,
-        moeda_codigo: moedaCodigo,
-        moeda_simbolo: moedaSimbolo,
-      })
-      .eq("id", accountId);
-  } else {
+  if (!accountId && licenseId) {
+    const { data: licenseAccount } = await adminClient
+      .from("licencas")
+      .select("conta_trading_id")
+      .eq("id", licenseId)
+      .maybeSingle<{ conta_trading_id: string }>();
+
+    if (licenseAccount?.conta_trading_id) {
+      accountId = licenseAccount.conta_trading_id;
+      await adminClient
+        .from("contas_trading")
+        .update({ numero_conta: numeroConta })
+        .eq("id", accountId);
+    }
+  }
+
+  if (!accountId) {
     const { data: createdAccount, error: accountError } = await adminClient
       .from("contas_trading")
       .insert({
         user_id: userId,
-        nome_cliente: nomeCliente,
+        nome_cliente: existingUser?.nome ?? "Cliente Lumitrader",
         numero_conta: numeroConta,
-        corretora: corretora || null,
-        moeda_codigo: moedaCodigo,
-        moeda_simbolo: moedaSimbolo,
+        corretora: null,
+        moeda_codigo: "USD",
+        moeda_simbolo: "$",
       })
       .select("id")
       .single<{ id: string }>();
@@ -113,13 +166,7 @@ export async function saveLicense(formData: FormData) {
     accountId = createdAccount.id;
   }
 
-  const { data: existingLicense } = await adminClient
-    .from("licencas")
-    .select("id")
-    .eq("conta_trading_id", accountId)
-    .maybeSingle<{ id: string }>();
-
-  if (existingLicense?.id) {
+  if (licenseId) {
     await adminClient
       .from("licencas")
       .update({
@@ -128,7 +175,7 @@ export async function saveLicense(formData: FormData) {
         valor,
         data_expiracao: dataExpiracao,
       })
-      .eq("id", existingLicense.id);
+      .eq("id", licenseId);
   } else {
     await adminClient.from("licencas").insert({
       user_id: userId,
@@ -143,6 +190,25 @@ export async function saveLicense(formData: FormData) {
   revalidatePath("/admin");
   revalidatePath("/dashboard");
   redirect("/admin?message=Licenca+salva+com+sucesso.&type=success");
+}
+
+export async function renewLicense30Days(formData: FormData) {
+  await requireAdminUser();
+  const adminClient = createAdminClient();
+
+  const licenseId = textValue(formData, "license_id");
+  const currentDate = textValue(formData, "current_expiration");
+  await adminClient
+    .from("licencas")
+    .update({
+      data_expiracao: nextExpirationDate(currentDate),
+      status: "ativa",
+    })
+    .eq("id", licenseId);
+
+  revalidatePath("/admin");
+  revalidatePath("/dashboard");
+  redirect("/admin?message=Licenca+renovada+por+30+dias.&type=success");
 }
 
 export async function toggleUserAccess(formData: FormData) {
@@ -164,7 +230,9 @@ export async function updateLicenseStatus(formData: FormData) {
   const adminClient = createAdminClient();
 
   const licenseId = textValue(formData, "license_id");
-  const status = textValue(formData, "status");
+  const requestedStatus = textValue(formData, "status");
+  const expirationDate = textValue(formData, "data_expiracao");
+  const status = resolveLicenseStatus(requestedStatus, expirationDate);
 
   await adminClient.from("licencas").update({ status }).eq("id", licenseId);
 
