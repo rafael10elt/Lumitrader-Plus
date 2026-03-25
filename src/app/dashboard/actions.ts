@@ -89,3 +89,48 @@ export async function toggleSystemState(formData: FormData) {
   revalidatePath("/dashboard");
   redirect(`/dashboard?account=${contaTradingId}`);
 }
+
+
+export async function submitTradeCommand(formData: FormData) {
+  const { profile } = await requireAuthenticatedUser();
+  const adminClient = createAdminClient();
+
+  const contaTradingId = textValue(formData, "conta_trading_id");
+  const ativo = textValue(formData, "ativo") || profile.ativo_padrao;
+  const timeframe = textValue(formData, "timeframe") || profile.timeframe_padrao;
+  const action = textValue(formData, "trade_action");
+  const lote = numberValue(formData, "lote");
+  const stopLoss = numberValue(formData, "stop_loss");
+  const takeProfit = numberValue(formData, "take_profit");
+  const ticketReferencia = textValue(formData, "ticket_referencia");
+
+  const tipo = action === "buy" ? "open_buy" : action === "sell" ? "open_sell" : "close_position";
+
+  if (!contaTradingId || !tipo) {
+    redirect("/dashboard?message=comando_invalido");
+  }
+
+  const payload = {
+    origem: "dashboard_manual",
+  };
+
+  const { error } = await adminClient.from("comandos_trading").insert({
+    user_id: profile.id,
+    conta_trading_id: contaTradingId,
+    ativo,
+    timeframe,
+    tipo,
+    lote: tipo === "close_position" ? null : lote,
+    stop_loss: tipo === "close_position" ? null : stopLoss,
+    take_profit: tipo === "close_position" ? null : takeProfit,
+    ticket_referencia: ticketReferencia || null,
+    payload,
+  });
+
+  if (error) {
+    redirect(`/dashboard?account=${contaTradingId}&message=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath("/dashboard");
+  redirect(`/dashboard?account=${contaTradingId}`);
+}

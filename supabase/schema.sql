@@ -5,6 +5,8 @@ create type public.modo_operacao as enum ('agressivo', 'conservador');
 create type public.direcao_operacao as enum ('compra', 'venda');
 create type public.status_operacao as enum ('aberta', 'fechada', 'cancelada');
 create type public.status_licenca as enum ('ativa', 'expirada', 'bloqueada', 'cancelada', 'pendente');
+create type public.tipo_comando_trading as enum ('open_buy', 'open_sell', 'close_position');
+create type public.status_comando_trading as enum ('pending', 'processing', 'executed', 'failed', 'cancelled');
 
 create table if not exists public.usuarios (
   id uuid primary key references auth.users (id) on delete cascade,
@@ -138,6 +140,25 @@ create table if not exists public.estatisticas (
   unique (user_id, conta_trading_id, ativo, periodo)
 );
 
+create table if not exists public.comandos_trading (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.usuarios (id) on delete cascade,
+  conta_trading_id uuid not null references public.contas_trading (id) on delete cascade,
+  ativo text not null,
+  timeframe text not null default 'M5',
+  tipo public.tipo_comando_trading not null,
+  status public.status_comando_trading not null default 'pending',
+  lote numeric(10, 2),
+  stop_loss numeric(12, 5),
+  take_profit numeric(12, 5),
+  ticket_referencia text,
+  payload jsonb,
+  resultado jsonb,
+  erro text,
+  solicitado_em timestamptz not null default timezone('utc', now()),
+  processado_em timestamptz
+);
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -250,6 +271,7 @@ alter table public.ativos_config enable row level security;
 alter table public.configuracoes_sessao enable row level security;
 alter table public.operacoes enable row level security;
 alter table public.estatisticas enable row level security;
+alter table public.comandos_trading enable row level security;
 
 drop policy if exists "usuarios_select_policy" on public.usuarios;
 create policy "usuarios_select_policy"
@@ -396,6 +418,37 @@ for all
 using (public.is_admin(auth.uid()))
 with check (public.is_admin(auth.uid()));
 
+drop policy if exists "comandos_trading_select_policy" on public.comandos_trading;
+create policy "comandos_trading_select_policy"
+on public.comandos_trading
+for select
+using (
+  public.is_admin(auth.uid())
+  or (
+    auth.uid() = user_id
+    and public.licenca_ativa(auth.uid(), conta_trading_id)
+  )
+);
+
+drop policy if exists "comandos_trading_write_policy" on public.comandos_trading;
+create policy "comandos_trading_write_policy"
+on public.comandos_trading
+for all
+using (
+  public.is_admin(auth.uid())
+  or (
+    auth.uid() = user_id
+    and public.licenca_ativa(auth.uid(), conta_trading_id)
+  )
+)
+with check (
+  public.is_admin(auth.uid())
+  or (
+    auth.uid() = user_id
+    and public.licenca_ativa(auth.uid(), conta_trading_id)
+  )
+);
+
 do $$
 begin
   if not exists (
@@ -456,3 +509,16 @@ create index if not exists idx_licencas_conta_status_expiracao on public.licenca
 create index if not exists idx_configuracoes_sessao_conta_ligado on public.configuracoes_sessao (conta_trading_id, sistema_ligado, atualizado_em desc);
 create index if not exists idx_operacoes_conta_aberta_em on public.operacoes (conta_trading_id, aberta_em desc);
 create index if not exists idx_operacoes_conta_status on public.operacoes (conta_trading_id, status);
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'comandos_trading'
+  ) then
+    alter publication supabase_realtime add table public.comandos_trading;
+  end if;
+end
+$$;
+
+create index if not exists idx_comandos_trading_conta_status_solicitado on public.comandos_trading (conta_trading_id, status, solicitado_em asc);

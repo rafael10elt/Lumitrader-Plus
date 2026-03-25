@@ -115,6 +115,15 @@ export type DashboardInsightBundle = {
   candles: MarketCandle[];
 };
 
+export type DashboardCommandStatus = {
+  id: string;
+  tipo: "open_buy" | "open_sell" | "close_position";
+  status: "pending" | "processing" | "executed" | "failed" | "cancelled";
+  erro: string | null;
+  solicitado_em: string;
+  processado_em: string | null;
+};
+
 function normalizeLicenseStatus(license: DashboardLicense) {
   const today = new Date().toISOString().slice(0, 10);
   if (license.status === "ativa" && license.data_expiracao < today) {
@@ -213,6 +222,14 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     .limit(1)
     .maybeSingle();
 
+  const commandStatusQuery = supabase
+    .from("comandos_trading")
+    .select("id, tipo, status, erro, solicitado_em, processado_em")
+    .eq("user_id", profile.id)
+    .eq("conta_trading_id", selectedAccount.id)
+    .order("solicitado_em", { ascending: false })
+    .limit(5);
+
   let operationsQuery = supabase
     .from("operacoes")
     .select("id, direcao, status, lote, preco_entrada, preco_saida, stop_loss, take_profit, lucro_prejuizo, aberta_em, fechada_em, timeframe, ativo, validacao_ia")
@@ -240,7 +257,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     operationsQuery = operationsQuery.lt("lucro_prejuizo", 0);
   }
 
-  const [{ data: config }, { data: stats }, { data: operations }, { data: openOperation }] = await Promise.all([configQuery, statsQuery, operationsQuery, openOperationQuery]);
+  const [{ data: config }, { data: stats }, { data: operations }, { data: openOperation }, { data: commandStatuses }] = await Promise.all([configQuery, statsQuery, operationsQuery, openOperationQuery, commandStatusQuery]);
 
   const resolvedConfig: DashboardConfig = config ?? {
     conta_trading_id: selectedAccount.id,
@@ -294,7 +311,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   } : null;
 
   const resolvedHistory: DashboardHistoryRow[] = operations?.length
-    ? operations.map((operation) => {
+    ? operations.filter((operation) => operation.status !== "aberta").map((operation) => {
         const resultValue = Number(operation.lucro_prejuizo ?? 0);
         return {
           id: operation.id,
@@ -351,6 +368,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
             historyFilters={historyFilters}
             insightBundle={insightBundle}
             openOperation={resolvedOpenOperation}
+            commandStatuses={(commandStatuses ?? []) as DashboardCommandStatus[]}
           />
         </section>
       </div>

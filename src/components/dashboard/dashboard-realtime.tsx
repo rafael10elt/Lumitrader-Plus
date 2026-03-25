@@ -2,7 +2,7 @@
 
 import { useEffect, useEffectEvent, useState, useTransition } from "react";
 import type { AppUser } from "@/lib/auth";
-import { saveTradingSettings, toggleSystemState } from "@/app/dashboard/actions";
+import { saveTradingSettings, submitTradeCommand, toggleSystemState } from "@/app/dashboard/actions";
 import { createClient } from "@/lib/supabase/client";
 import { TradingViewChart } from "@/components/dashboard/tradingview-chart";
 import type {
@@ -14,6 +14,7 @@ import type {
   DashboardLicense,
   DashboardOpenOperation,
   DashboardStats,
+  DashboardCommandStatus,
 } from "@/app/dashboard/page";
 
 type SelectableAccount = DashboardAccount & {
@@ -32,6 +33,7 @@ type DashboardRealtimeProps = {
   historyFilters: DashboardHistoryFilters;
   insightBundle: DashboardInsightBundle;
   openOperation: DashboardOpenOperation | null;
+  commandStatuses: DashboardCommandStatus[];
 };
 
 function formatAccountCurrency(value: number, account: DashboardAccount) {
@@ -77,6 +79,7 @@ export function DashboardRealtime({
   historyFilters,
   insightBundle,
   openOperation,
+  commandStatuses,
 }: DashboardRealtimeProps) {
   const supabase = createClient();
   const [, startTransition] = useTransition();
@@ -87,6 +90,7 @@ export function DashboardRealtime({
   const [liveNow, setLiveNow] = useState(() => new Date());
   const [liveInsightBundle, setLiveInsightBundle] = useState(insightBundle);
   const [liveOpenOperation, setLiveOpenOperation] = useState(openOperation);
+  const [liveCommandStatuses, setLiveCommandStatuses] = useState(commandStatuses);
 
   const metrics = [
     { label: "Lucro do Dia", value: formatAccountCurrency(Math.max(liveStats.lucro_total, 0), liveAccount), tone: "text-lime-400" },
@@ -96,7 +100,7 @@ export function DashboardRealtime({
   ];
 
   const refreshSnapshot = useEffectEvent(async () => {
-    const [{ data: nextAccount }, { data: nextConfig }, { data: nextStats }, { data: nextOperations }] = await Promise.all([
+    const [{ data: nextAccount }, { data: nextConfig }, { data: nextStats }, { data: nextOperations }, { data: nextCommands }] = await Promise.all([
       supabase
         .from("contas_trading")
         .select("id, user_id, nome_cliente, numero_conta, corretora, moeda_codigo, moeda_simbolo, saldo_atual, equity, margem_livre, nivel_margem, ativo, atualizado_em, server_time, mercado_snapshot, insight_atual, ultima_sincronizacao")
@@ -122,6 +126,12 @@ export function DashboardRealtime({
         .eq("conta_trading_id", selectedAccountId)
         .order("aberta_em", { ascending: false })
         .limit(50),
+      supabase
+        .from("comandos_trading")
+        .select("id, tipo, status, erro, solicitado_em, processado_em")
+        .eq("conta_trading_id", selectedAccountId)
+        .order("solicitado_em", { ascending: false })
+        .limit(5),
     ]);
 
     startTransition(() => {
@@ -186,6 +196,9 @@ export function DashboardRealtime({
           }));
         }
       }
+      if (nextCommands) {
+        setLiveCommandStatuses(nextCommands as DashboardCommandStatus[]);
+      }
     });
   });
 
@@ -210,6 +223,9 @@ export function DashboardRealtime({
         void refreshSnapshot();
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "licencas", filter: `conta_trading_id=eq.${selectedAccountId}` }, () => {
+        void refreshSnapshot();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "comandos_trading", filter: `conta_trading_id=eq.${selectedAccountId}` }, () => {
         void refreshSnapshot();
       })
       .subscribe();
@@ -242,6 +258,32 @@ export function DashboardRealtime({
     hour12: false,
     timeZone: "America/Sao_Paulo",
   }).format(serverClock);
+  const latestCommand = liveCommandStatuses[0] ?? null;
+  const commandTypeLabel = latestCommand
+    ? latestCommand.tipo === "open_buy"
+      ? "Compra"
+      : latestCommand.tipo === "open_sell"
+        ? "Venda"
+        : "Fechamento"
+    : null;
+  const commandStatusLabel = latestCommand
+    ? latestCommand.status === "pending"
+      ? "Na fila"
+      : latestCommand.status === "processing"
+        ? "Executando na VPS"
+        : latestCommand.status === "executed"
+          ? "Executado"
+          : latestCommand.status === "failed"
+            ? "Falhou"
+            : "Cancelado"
+    : "Sem comandos recentes";
+  const commandStatusTone = latestCommand
+    ? latestCommand.status === "executed"
+      ? "text-lime-300"
+      : latestCommand.status === "failed"
+        ? "text-red-300"
+        : "text-amber-200"
+    : "text-slate-300";
 
   return (
     <div className="mt-5 grid gap-6">
@@ -318,6 +360,38 @@ export function DashboardRealtime({
               <div className="mt-4 rounded-[24px] border border-white/8 bg-slate-950/35 p-4">
                 <p className="text-sm text-slate-300">Limite de operacoes por dia</p>
                 <p className="mt-2 text-xl font-semibold">{liveConfig.limite_operacoes_ativo ? String(liveConfig.limite_operacoes_diaria ?? 0) : "Desativado"}</p>
+              </div>
+
+              <div className="mt-4 rounded-[24px] border border-white/8 bg-slate-950/35 p-4">
+                <p className="text-sm text-slate-300">Canal operacional MT5</p>
+                <p className={`mt-2 text-lg font-semibold ${commandStatusTone}`}>{commandStatusLabel}</p>
+                <p className="mt-1 text-sm text-slate-400">
+                  {liveAccount.ultima_sincronizacao
+                    ? `Ultima leitura: ${new Intl.DateTimeFormat("pt-BR", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                        hour12: false,
+                      }).format(new Date(liveAccount.ultima_sincronizacao))}`
+                    : "Aguardando primeira sincronizacao da VPS."}
+                </p>
+                {latestCommand ? (
+                  <p className="mt-2 text-sm text-slate-300">
+                    Ultimo comando: {commandTypeLabel} em {new Intl.DateTimeFormat("pt-BR", {
+                      day: "2-digit",
+                      month: "2-digit",
+                      year: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                      hour12: false,
+                    }).format(new Date(latestCommand.solicitado_em))}
+                  </p>
+                ) : null}
+                {latestCommand?.erro ? <p className="mt-2 text-sm text-red-300">{latestCommand.erro}</p> : null}
               </div>
             </div>
 
@@ -422,6 +496,23 @@ export function DashboardRealtime({
             ) : (
               <div className="mt-5 rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-400">Assim que houver uma posicao aberta nesta conta, o painel mostra direcao, lote, entrada, P/L e PnL em tempo real.</div>
             )}
+          </div>
+
+
+          <div className="glass-panel rounded-[28px] p-5">
+            <p className="font-mono text-xs uppercase tracking-[0.3em] text-cyan-200/70">Execucao Manual</p>
+            <form className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_auto_auto_auto]">
+              <input type="hidden" name="conta_trading_id" value={selectedAccountId} />
+              <input type="hidden" name="ativo" value={liveConfig.ativo} />
+              <input type="hidden" name="timeframe" value={liveConfig.timeframe} />
+              <input type="hidden" name="ticket_referencia" value={liveOpenOperation?.id ?? ""} />
+              <SettingsField label="Lote" name="lote" type="number" defaultValue={liveOpenOperation ? liveOpenOperation.lot.toFixed(2) : "0.10"} />
+              <SettingsField label="Stop Loss" name="stop_loss" type="number" defaultValue={liveOpenOperation?.stopLoss != null ? String(liveOpenOperation.stopLoss) : ""} />
+              <SettingsField label="Take Profit" name="take_profit" type="number" defaultValue={liveOpenOperation?.takeProfit != null ? String(liveOpenOperation.takeProfit) : ""} />
+              <div className="flex items-end"><button formAction={submitTradeCommand} name="trade_action" value="buy" className="w-full rounded-[18px] bg-lime-400/12 px-4 py-3 text-sm font-semibold text-lime-200">Comprar</button></div>
+              <div className="flex items-end"><button formAction={submitTradeCommand} name="trade_action" value="sell" className="w-full rounded-[18px] bg-red-400/12 px-4 py-3 text-sm font-semibold text-red-200">Vender</button></div>
+              <div className="flex items-end"><button formAction={submitTradeCommand} name="trade_action" value="close" className="w-full rounded-[18px] border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-100">Fechar posicao</button></div>
+            </form>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-2">
