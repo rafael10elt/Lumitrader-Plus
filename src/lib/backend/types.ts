@@ -1,4 +1,12 @@
-﻿export type TradingEventPayload = {
+﻿export type MarketCandle = {
+  time?: string;
+  open: number;
+  close: number;
+  high: number;
+  low: number;
+};
+
+export type TradingEventPayload = {
   event: "operation_opened" | "operation_closed";
   account: {
     number: string;
@@ -48,6 +56,7 @@
     support?: number;
     resistance?: number;
     notes?: string[];
+    candles?: MarketCandle[];
   };
 };
 

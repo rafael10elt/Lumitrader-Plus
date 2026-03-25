@@ -4,7 +4,6 @@ import { requireAdminUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const PLAN_OPTIONS = ["Starter", "Pro", "Premium", "Enterprise"];
-
 const LICENSE_STATUS_OPTIONS = [
   { value: "ativa", label: "Ativa" },
   { value: "pendente", label: "Pendente" },
@@ -47,6 +46,9 @@ type ManagedAccount = {
   user_id: string;
   nome_cliente: string;
   numero_conta: string;
+  mt5_login: string | null;
+  mt5_server: string | null;
+  mt5_password: string | null;
 };
 
 function normalizedLicenseStatus(status: string, expirationDate: string) {
@@ -69,7 +71,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
   const [{ data: users }, { data: licenses }, { data: accounts }] = await Promise.all([
     supabase.from("usuarios").select("id, nome, email, telegram_id, role, acesso_ativo").order("criado_em", { ascending: false }),
     supabase.from("licencas").select("id, user_id, nome_plano, status, valor, data_expiracao, conta_trading_id").order("data_expiracao", { ascending: true }),
-    supabase.from("contas_trading").select("id, user_id, nome_cliente, numero_conta").order("criado_em", { ascending: false }),
+    supabase.from("contas_trading").select("id, user_id, nome_cliente, numero_conta, mt5_login, mt5_server, mt5_password").order("criado_em", { ascending: false }),
   ]);
 
   const expiredIds = (licenses ?? [])
@@ -89,7 +91,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
   const filteredLicenses = managedLicenses.filter((license) => {
     const account = managedAccounts.find((item) => item.id === license.conta_trading_id);
     const user = managedUsers.find((item) => item.id === license.user_id);
-    const matchesQuery = !query || [user?.nome ?? "", user?.email ?? "", account?.numero_conta ?? ""].some((value) => value.toLowerCase().includes(query));
+    const matchesQuery = !query || [user?.nome ?? "", user?.email ?? "", account?.numero_conta ?? "", account?.mt5_server ?? ""].some((value) => value.toLowerCase().includes(query));
     const matchesPlan = planFilter === "all" || license.nome_plano === planFilter;
     const matchesStatus = statusFilter === "all" || license.status === statusFilter;
     return matchesQuery && matchesPlan && matchesStatus;
@@ -103,7 +105,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
             <div>
               <p className="font-mono text-xs uppercase tracking-[0.3em] text-cyan-200/70">Gestao SaaS</p>
               <h1 className="mt-2 text-3xl font-semibold">Painel administrativo do Lumitrader</h1>
-              <p className="mt-3 max-w-3xl text-slate-300">Cadastro de usuarios, licencas por conta MT5, renovacao rapida, filtros e edicao inline.</p>
+              <p className="mt-3 max-w-3xl text-slate-300">Cadastro de usuarios, licencas por conta MT5, credenciais dinamicas e filtros reais.</p>
             </div>
             <div className="flex flex-wrap gap-3">
               <div className="rounded-[24px] border border-white/8 bg-white/4 px-4 py-3">
@@ -116,8 +118,8 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
 
           {message ? <div className={`mt-5 rounded-[20px] border px-4 py-3 text-sm ${isSuccess ? "border-lime-400/20 bg-lime-400/10 text-lime-200" : "border-red-400/20 bg-red-400/10 text-red-200"}`}>{message}</div> : null}
 
-          <form className="mt-5 grid gap-4 rounded-[24px] border border-white/8 bg-white/4 p-4 md:grid-cols-[1.2fr_0.8fr_0.8fr_auto]">
-            <Field label="Buscar" name="query" placeholder="Nome, email, telegram ou conta" defaultValue={params.query ?? ""} required={false} />
+          <form method="get" action="/admin" className="mt-5 grid gap-4 rounded-[24px] border border-white/8 bg-white/4 p-4 md:grid-cols-[1.2fr_0.8fr_0.8fr_auto]">
+            <Field label="Buscar" name="query" placeholder="Nome, email, telegram, conta ou servidor" defaultValue={params.query ?? ""} required={false} />
             <SelectField label="Plano" name="plan" options={[{ value: "all", label: "Todos" }, ...PLAN_OPTIONS.map((plan) => ({ value: plan, label: plan }))]} defaultValue={planFilter} required={false} />
             <SelectField label="Status" name="status" options={[{ value: "all", label: "Todos" }, ...LICENSE_STATUS_OPTIONS]} defaultValue={statusFilter} required={false} />
             <div className="flex items-end gap-3"><button className="rounded-[18px] border border-cyan-400/30 bg-cyan-400/10 px-4 py-3 text-sm font-semibold text-cyan-100">Filtrar</button></div>
@@ -141,11 +143,14 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
                 <SelectField label="Usuario" name="user_id" options={managedUsers.filter((user) => user.role === "user").map((user) => ({ value: user.id, label: `${user.nome ?? "Sem nome"} - ${user.email ?? "sem email"}` }))} />
                 <SelectField label="Plano" name="nome_plano" options={PLAN_OPTIONS.map((plan) => ({ value: plan, label: plan }))} defaultValue="Premium" />
                 <Field label="Numero da conta MT5" name="numero_conta" placeholder="12345678" />
-                <Field label="Valor da licenca" name="valor" type="number" placeholder="297" required={false} />
+                <Field label="Login MT5" name="mt5_login" placeholder="12345678" required={false} />
+                <Field label="Servidor MT5" name="mt5_server" placeholder="FTMO-Demo" required={false} />
+                <Field label="Senha MT5" name="mt5_password" type="password" placeholder="Senha da conta" required={false} />
+                <Field label="Valor da licenca (R$)" name="valor" type="number" placeholder="297" required={false} />
                 <Field label="Data de expiracao" name="data_expiracao" type="date" />
                 <SelectField label="Status" name="status" options={LICENSE_STATUS_OPTIONS.filter((item) => item.value !== "expirada")} defaultValue="ativa" />
               </div>
-              <p className="mt-4 text-sm text-slate-400">Nome do cliente, corretora e moeda ficam para atualizacao automatica via MT5.</p>
+              <p className="mt-4 text-sm text-slate-400">Nome do cliente, corretora e moeda continuam sendo atualizados automaticamente pelo backend operacional.</p>
               <button formAction={saveLicense} className="mt-5 rounded-[20px] border border-cyan-400/30 bg-cyan-400/10 px-5 py-3 font-semibold text-cyan-100">Salvar licenca</button>
             </form>
           </div>
@@ -155,7 +160,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
           <div className="glass-panel rounded-[32px] p-5">
             <p className="font-mono text-xs uppercase tracking-[0.3em] text-cyan-200/70">Usuarios</p>
             <div className="mt-5 grid gap-4">
-              {filteredUsers.map((user) => (
+              {filteredUsers.length > 0 ? filteredUsers.map((user) => (
                 <form key={user.id} className="rounded-[24px] border border-white/8 bg-white/4 p-4">
                   <input type="hidden" name="user_id" value={user.id} />
                   <div className="grid gap-4 lg:grid-cols-[1fr_1fr_0.8fr_auto] lg:items-end">
@@ -169,25 +174,27 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
                   </div>
                   <p className="mt-4 text-xs uppercase tracking-[0.22em] text-slate-500">Role {user.role}</p>
                 </form>
-              ))}
+              )) : <EmptyState text="Nenhum usuario encontrado para os filtros atuais." />}
             </div>
           </div>
 
           <div className="glass-panel rounded-[32px] p-5">
             <p className="font-mono text-xs uppercase tracking-[0.3em] text-cyan-200/70">Licencas por conta</p>
             <div className="mt-5 grid gap-4">
-              {filteredLicenses.map((license) => {
+              {filteredLicenses.length > 0 ? filteredLicenses.map((license) => {
                 const account = managedAccounts.find((item) => item.id === license.conta_trading_id);
                 const user = managedUsers.find((item) => item.id === license.user_id);
                 return (
                   <form key={license.id} className="rounded-[24px] border border-white/8 bg-white/4 p-4">
                     <input type="hidden" name="license_id" value={license.id} />
                     <input type="hidden" name="user_id" value={license.user_id} />
-
                     <div className="grid gap-4 md:grid-cols-2">
                       <SelectField label="Plano" name="nome_plano" options={PLAN_OPTIONS.map((plan) => ({ value: plan, label: plan }))} defaultValue={license.nome_plano} />
                       <Field label="Numero da conta MT5" name="numero_conta" defaultValue={account?.numero_conta ?? ""} />
-                      <Field label="Valor da licenca" name="valor" type="number" defaultValue={String(license.valor)} />
+                      <Field label="Login MT5" name="mt5_login" defaultValue={account?.mt5_login ?? account?.numero_conta ?? ""} required={false} />
+                      <Field label="Servidor MT5" name="mt5_server" defaultValue={account?.mt5_server ?? ""} required={false} />
+                      <Field label="Senha MT5" name="mt5_password" type="password" defaultValue={account?.mt5_password ?? ""} required={false} />
+                      <Field label="Valor da licenca (R$)" name="valor" type="number" defaultValue={String(license.valor)} />
                       <Field label="Data de expiracao" name="data_expiracao" type="date" defaultValue={license.data_expiracao} />
                       <SelectField label="Status" name="status" options={LICENSE_STATUS_OPTIONS} defaultValue={license.status} />
                     </div>
@@ -199,7 +206,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
                     </div>
                   </form>
                 );
-              })}
+              }) : <EmptyState text="Nenhuma licenca encontrada para os filtros atuais." />}
             </div>
           </div>
         </section>
@@ -214,4 +221,8 @@ function Field({ label, name, placeholder, type = "text", defaultValue, required
 
 function SelectField({ label, name, options, defaultValue, required = true }: { label: string; name: string; options: Array<{ value: string; label: string }>; defaultValue?: string; required?: boolean }) {
   return <label className="grid gap-2"><span className="text-sm text-slate-300">{label}</span><select name={name} defaultValue={defaultValue} required={required} className="rounded-[18px] border border-white/10 bg-slate-950/50 px-4 py-3 text-white outline-none">{required ? <option value="">Selecione</option> : null}{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>;
+}
+
+function EmptyState({ text }: { text: string }) {
+  return <div className="rounded-[24px] border border-white/8 bg-white/4 p-6 text-slate-400">{text}</div>;
 }

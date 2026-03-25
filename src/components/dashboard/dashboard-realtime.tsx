@@ -2,22 +2,18 @@
 
 import { useEffect, useEffectEvent, useState, useTransition } from "react";
 import type { AppUser } from "@/lib/auth";
-import { saveTradingSettings } from "@/app/dashboard/actions";
+import { saveTradingSettings, toggleSystemState } from "@/app/dashboard/actions";
 import { createClient } from "@/lib/supabase/client";
+import type { MarketCandle } from "@/lib/backend/types";
 import type {
   DashboardAccount,
   DashboardConfig,
+  DashboardHistoryFilters,
   DashboardHistoryRow,
+  DashboardInsightBundle,
   DashboardLicense,
   DashboardStats,
 } from "@/app/dashboard/page";
-
-type Candle = {
-  open: number;
-  close: number;
-  high: number;
-  low: number;
-};
 
 type SelectableAccount = DashboardAccount & {
   license: DashboardLicense;
@@ -32,8 +28,8 @@ type DashboardRealtimeProps = {
   config: DashboardConfig;
   stats: DashboardStats;
   history: DashboardHistoryRow[];
-  insights: string[];
-  candles: Candle[];
+  historyFilters: DashboardHistoryFilters;
+  insightBundle: DashboardInsightBundle;
 };
 
 function formatAccountCurrency(value: number, account: DashboardAccount) {
@@ -51,6 +47,14 @@ function formatAccountCurrency(value: number, account: DashboardAccount) {
   }
 }
 
+function formatLicenseCurrency(value: number) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 function formatTimeRange(start: string, end: string) {
   return `${start.slice(0, 5)}-${end.slice(0, 5)}`;
 }
@@ -64,8 +68,8 @@ export function DashboardRealtime({
   config,
   stats,
   history,
-  insights,
-  candles,
+  historyFilters,
+  insightBundle,
 }: DashboardRealtimeProps) {
   const supabase = createClient();
   const [isPending, startTransition] = useTransition();
@@ -73,6 +77,8 @@ export function DashboardRealtime({
   const [liveConfig, setLiveConfig] = useState(config);
   const [liveStats, setLiveStats] = useState(stats);
   const [liveHistory, setLiveHistory] = useState(history);
+  const [liveNow, setLiveNow] = useState(() => new Date());
+  const [liveInsightBundle, setLiveInsightBundle] = useState(insightBundle);
 
   const metrics = [
     { label: "Lucro do Dia", value: formatAccountCurrency(Math.max(liveStats.lucro_total, 0), liveAccount), tone: "text-lime-400" },
@@ -90,7 +96,7 @@ export function DashboardRealtime({
         .maybeSingle<DashboardAccount>(),
       supabase
         .from("configuracoes_sessao")
-        .select("id, conta_trading_id, ativo, sistema_ligado, modo, breakeven_ativo, trailing_stop_ativo, horario_inicio, horario_fim, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria")
+        .select("id, conta_trading_id, ativo, timeframe, sistema_ligado, modo, breakeven_ativo, trailing_stop_ativo, horario_inicio, horario_fim, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria")
         .eq("conta_trading_id", selectedAccountId)
         .order("atualizado_em", { ascending: false })
         .limit(1)
@@ -104,10 +110,10 @@ export function DashboardRealtime({
         .maybeSingle<DashboardStats>(),
       supabase
         .from("operacoes")
-        .select("id, direcao, lote, preco_entrada, lucro_prejuizo, aberta_em")
+        .select("id, direcao, lote, preco_entrada, lucro_prejuizo, aberta_em, fechada_em, validacao_ia")
         .eq("conta_trading_id", selectedAccountId)
         .order("aberta_em", { ascending: false })
-        .limit(5),
+        .limit(50),
     ]);
 
     startTransition(() => {
@@ -121,27 +127,40 @@ export function DashboardRealtime({
         setLiveStats(nextStats);
       }
       if (nextOperations) {
-        setLiveHistory(
-          nextOperations.map((operation) => {
-            const resultValue = Number(operation.lucro_prejuizo ?? 0);
-            return {
-              id: operation.id,
-              time: new Intl.DateTimeFormat("pt-BR", {
-                hour: "2-digit",
-                minute: "2-digit",
-                hour12: false,
-              }).format(new Date(operation.aberta_em)),
-              type: operation.direcao === "compra" ? "Compra" : "Venda",
-              lot: Number(operation.lote).toFixed(2),
-              entry: Number(operation.preco_entrada).toFixed(2),
-              result: `${resultValue >= 0 ? "+" : "-"}${Math.abs(resultValue).toFixed(2)}`,
-              resultTone: resultValue >= 0 ? "text-lime-400" : "text-red-400",
-            };
-          }),
-        );
+        const nextRows = nextOperations.map((operation) => {
+          const resultValue = Number(operation.lucro_prejuizo ?? 0);
+          return {
+            id: operation.id,
+            time: new Intl.DateTimeFormat("pt-BR", {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            }).format(new Date(operation.fechada_em ?? operation.aberta_em)),
+            type: operation.direcao === "compra" ? "Compra" : "Venda",
+            lot: Number(operation.lote).toFixed(2),
+            entry: Number(operation.preco_entrada).toFixed(2),
+            result: `${resultValue >= 0 ? "+" : "-"}${Math.abs(resultValue).toFixed(2)}`,
+            resultTone: resultValue >= 0 ? "text-lime-400" : "text-red-400",
+          };
+        });
+        setLiveHistory(nextRows);
+
+        const latestTelemetry = nextOperations.find((operation) => operation.validacao_ia);
+        if (latestTelemetry?.validacao_ia) {
+          setLiveInsightBundle({
+            summary: typeof latestTelemetry.validacao_ia.ai?.summary === "string" ? latestTelemetry.validacao_ia.ai.summary : null,
+            notes: Array.isArray(latestTelemetry.validacao_ia.market?.notes) ? latestTelemetry.validacao_ia.market.notes : [],
+            candles: Array.isArray(latestTelemetry.validacao_ia.market?.candles) ? latestTelemetry.validacao_ia.market.candles : [],
+          });
+        }
       }
     });
   });
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setLiveNow(new Date()), 1000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const channel = supabase
@@ -170,12 +189,12 @@ export function DashboardRealtime({
 
   const floatingProfit = (liveAccount.equity ?? 0) - (liveAccount.saldo_atual ?? 0);
   const isSystemOnline = liveConfig.sistema_ligado && Boolean(liveAccount.ativo);
-  const accountUpdatedLabel = new Intl.DateTimeFormat("pt-BR", {
+  const currentClockLabel = new Intl.DateTimeFormat("pt-BR", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
     hour12: false,
-  }).format(new Date(liveAccount.atualizado_em));
+  }).format(liveNow);
 
   return (
     <div className="mt-5 grid gap-6">
@@ -206,11 +225,11 @@ export function DashboardRealtime({
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1.35fr_0.8fr]">
+      <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
         <div className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <InfoCard eyebrow="Cliente" title={liveAccount.nome_cliente ?? profile.nome ?? "Trader"} detail={`Email: ${profile.email ?? "nao informado"}`} />
-            <InfoCard eyebrow="Licenca" title={`${selectedLicense.status.toUpperCase()} ate ${selectedLicense.data_expiracao}`} detail={`Valor ${formatAccountCurrency(selectedLicense.valor, liveAccount)}`} />
+            <InfoCard eyebrow="Licenca" title={`${selectedLicense.status.toUpperCase()} ate ${selectedLicense.data_expiracao}`} detail={`Valor ${formatLicenseCurrency(selectedLicense.valor)}`} />
             <InfoCard eyebrow="Janela Operacional" title={formatTimeRange(liveConfig.horario_inicio, liveConfig.horario_fim)} detail={`${liveConfig.breakeven_ativo ? "Breakeven ON" : "Breakeven OFF"} / ${liveConfig.trailing_stop_ativo ? "Trailing ON" : "Trailing OFF"}`} />
           </div>
 
@@ -221,7 +240,7 @@ export function DashboardRealtime({
                   <p className="font-mono text-xs uppercase tracking-[0.3em] text-cyan-200/70">Controle Central</p>
                   <h2 className="mt-1 text-2xl font-semibold">{isSystemOnline ? "Auto trader armado" : "Sistema aguardando backend operacional"}</h2>
                 </div>
-                <span className="rounded-full border border-lime-400/30 bg-lime-400/10 px-3 py-1 text-sm font-medium text-lime-300">{isPending ? "Sincronizando" : accountUpdatedLabel}</span>
+                <span className="rounded-full border border-lime-400/30 bg-lime-400/10 px-3 py-1 text-sm font-medium text-lime-300">{isPending ? "Sincronizando" : currentClockLabel}</span>
               </div>
 
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -229,13 +248,20 @@ export function DashboardRealtime({
                 <ToggleCard label="Trailing Stop" value={liveConfig.trailing_stop_ativo ? "ON" : "OFF"} />
               </div>
 
-              <button className="mt-5 flex w-full items-center justify-center gap-3 rounded-[24px] bg-linear-to-r from-lime-500 via-lime-400 to-emerald-400 px-6 py-5 text-2xl font-semibold text-slate-950 shadow-[0_20px_50px_rgba(157,232,51,0.28)] transition-transform duration-200 hover:-translate-y-0.5">
-                <span className="text-3xl">▶</span>
-                Play
-              </button>
+              <form className="mt-5">
+                <input type="hidden" name="config_id" value={liveConfig.id ?? ""} />
+                <input type="hidden" name="conta_trading_id" value={selectedAccountId} />
+                <input type="hidden" name="current_state" value={String(liveConfig.sistema_ligado)} />
+                <input type="hidden" name="ativo" value={liveConfig.ativo} />
+                <input type="hidden" name="timeframe" value={liveConfig.timeframe} />
+                <button formAction={toggleSystemState} className="flex w-full items-center justify-center gap-3 rounded-[24px] bg-linear-to-r from-lime-500 via-lime-400 to-emerald-400 px-6 py-5 text-2xl font-semibold text-slate-950 shadow-[0_20px_50px_rgba(157,232,51,0.28)] transition-transform duration-200 hover:-translate-y-0.5">
+                  <span className="text-3xl">{liveConfig.sistema_ligado ? "■" : "▶"}</span>
+                  {liveConfig.sistema_ligado ? "Pausar" : "Play"}
+                </button>
+              </form>
 
               <div className="mt-5 grid gap-3 rounded-[24px] border border-white/8 bg-white/4 p-4 md:grid-cols-3">
-                <QuickFact label="Timeframe" value={profile.timeframe_padrao} />
+                <QuickFact label="Timeframe" value={liveConfig.timeframe} />
                 <QuickFact label="Meta diaria" value={formatAccountCurrency(liveConfig.meta_lucro_diaria, liveAccount)} />
                 <QuickFact label="Perda maxima" value={formatAccountCurrency(liveConfig.perda_maxima_diaria, liveAccount)} />
               </div>
@@ -278,6 +304,12 @@ export function DashboardRealtime({
               <input type="hidden" name="conta_trading_id" value={selectedAccountId} />
               <SettingsField label="Ativo" name="ativo" defaultValue={liveConfig.ativo} />
               <label className="grid gap-2">
+                <span className="text-sm text-slate-300">Timeframe</span>
+                <select name="timeframe" defaultValue={liveConfig.timeframe} className="rounded-[18px] border border-white/10 bg-slate-950/50 px-4 py-3 text-white outline-none">
+                  {['M1', 'M5', 'M15', 'M30', 'H1'].map((timeframe) => <option key={timeframe} value={timeframe}>{timeframe}</option>)}
+                </select>
+              </label>
+              <label className="grid gap-2">
                 <span className="text-sm text-slate-300">Modo</span>
                 <select name="modo" defaultValue={liveConfig.modo} className="rounded-[18px] border border-white/10 bg-slate-950/50 px-4 py-3 text-white outline-none">
                   <option value="agressivo">Agressivo</option>
@@ -302,8 +334,22 @@ export function DashboardRealtime({
               </div>
             </form>
           </div>
+        </div>
 
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="space-y-4">
+          <div className="glass-panel rounded-[28px] p-4 sm:p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-mono text-xs uppercase tracking-[0.3em] text-cyan-200/70">Grafico em Tempo Real</p>
+                <h2 className="mt-1 text-2xl font-semibold">Painel tecnico {liveConfig.ativo}</h2>
+              </div>
+              <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs uppercase tracking-[0.25em] text-cyan-200">{liveConfig.timeframe}</span>
+            </div>
+
+            <CandlestickChart candles={liveInsightBundle.candles} currencySymbol={liveAccount.moeda_simbolo} />
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-2">
             {metrics.map((item) => (
               <div key={item.label} className="glass-panel rounded-[24px] px-5 py-4">
                 <p className="text-sm text-slate-300">{item.label}</p>
@@ -311,18 +357,20 @@ export function DashboardRealtime({
               </div>
             ))}
           </div>
-        </div>
 
-        <div className="glass-panel rounded-[28px] p-4 sm:p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-mono text-xs uppercase tracking-[0.3em] text-cyan-200/70">Grafico em Tempo Real</p>
-              <h2 className="mt-1 text-2xl font-semibold">Painel tecnico {liveConfig.ativo}</h2>
+          <div className="glass-panel rounded-[32px] p-5">
+            <p className="font-mono text-xs uppercase tracking-[0.3em] text-cyan-200/70">Insights Operacionais</p>
+            <div className="mt-5 grid gap-3">
+              {liveInsightBundle.summary ? (
+                <div className="rounded-[24px] border border-cyan-400/20 bg-cyan-400/10 p-4 text-slate-100">{liveInsightBundle.summary}</div>
+              ) : (
+                <div className="rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-400">Aguardando novo evento operacional com analise de IA.</div>
+              )}
+              {liveInsightBundle.notes.length > 0 ? liveInsightBundle.notes.map((insight) => (
+                <div key={insight} className="rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-100"><span className="mr-3 text-lime-300">✓</span>{insight}</div>
+              )) : null}
             </div>
-            <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs uppercase tracking-[0.25em] text-cyan-200">{profile.timeframe_padrao}</span>
           </div>
-
-          <CandlestickChart candles={candles} currencySymbol={liveAccount.moeda_simbolo} />
         </div>
       </div>
 
@@ -340,53 +388,53 @@ export function DashboardRealtime({
         </div>
 
         <div className="glass-panel rounded-[32px] p-5">
-          <p className="font-mono text-xs uppercase tracking-[0.3em] text-cyan-200/70">Insights Operacionais</p>
-          <div className="mt-5 grid gap-3">
-            {insights.map((insight) => (
-              <div key={insight} className="rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-100"><span className="mr-3 text-lime-300">✓</span>{insight}</div>
-            ))}
+          <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div>
+              <p className="font-mono text-xs uppercase tracking-[0.3em] text-cyan-200/70">Historico de Operacoes</p>
+              <h2 className="mt-1 text-2xl font-semibold">Timeline operacional da conta selecionada</h2>
+            </div>
+            <p className="text-sm text-slate-400">Licenca e dados desta conta sao atualizados em tempo real.</p>
           </div>
-        </div>
-      </section>
 
-      <section className="glass-panel rounded-[32px] p-5">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="font-mono text-xs uppercase tracking-[0.3em] text-cyan-200/70">Historico de Operacoes</p>
-            <h2 className="mt-1 text-2xl font-semibold">Timeline operacional da conta selecionada</h2>
-          </div>
-          <p className="text-sm text-slate-400">Licenca e dados desta conta sao atualizados em tempo real.</p>
-        </div>
+          <form action="/dashboard" className="mt-5 grid gap-3 rounded-[24px] border border-white/8 bg-white/4 p-4 md:grid-cols-[1fr_1fr_0.8fr_0.8fr_auto]">
+            <input type="hidden" name="account" value={selectedAccountId} />
+            <SettingsField label="De" name="from" type="date" defaultValue={historyFilters.from} />
+            <SettingsField label="Ate" name="to" type="date" defaultValue={historyFilters.to} />
+            <label className="grid gap-2"><span className="text-sm text-slate-300">Tipo</span><select name="type" defaultValue={historyFilters.type} className="rounded-[18px] border border-white/10 bg-slate-950/50 px-4 py-3 text-white outline-none"><option value="all">Todos</option><option value="compra">Compra</option><option value="venda">Venda</option></select></label>
+            <label className="grid gap-2"><span className="text-sm text-slate-300">Resultado</span><select name="result" defaultValue={historyFilters.result} className="rounded-[18px] border border-white/10 bg-slate-950/50 px-4 py-3 text-white outline-none"><option value="all">Todos</option><option value="gain">Ganho</option><option value="loss">Perda</option></select></label>
+            <div className="flex items-end"><button className="w-full rounded-[18px] border border-cyan-400/30 bg-cyan-400/10 px-4 py-3 text-sm font-semibold text-cyan-100">Filtrar</button></div>
+          </form>
 
-        <div className="mt-5 overflow-hidden rounded-[28px] border border-white/8">
-          <table className="min-w-full border-separate border-spacing-0 overflow-hidden">
-            <thead className="bg-white/6 text-left text-sm uppercase tracking-[0.22em] text-slate-400">
-              <tr>
-                <th className="px-4 py-4">Hora</th>
-                <th className="px-4 py-4">Tipo</th>
-                <th className="px-4 py-4">Lote</th>
-                <th className="px-4 py-4">Entrada</th>
-                <th className="px-4 py-4">Resultado</th>
-              </tr>
-            </thead>
-            <tbody className="bg-slate-950/30">
-              {liveHistory.length > 0 ? (
-                liveHistory.map((row) => (
-                  <tr key={row.id} className="text-base even:bg-white/3">
-                    <td className="px-4 py-4 text-slate-300">{row.time}</td>
-                    <td className="px-4 py-4">{row.type}</td>
-                    <td className="px-4 py-4">{row.lot}</td>
-                    <td className="px-4 py-4 text-slate-300">{row.entry}</td>
-                    <td className={`px-4 py-4 font-semibold ${row.resultTone}`}>{liveAccount.moeda_simbolo} {row.result}</td>
-                  </tr>
-                ))
-              ) : (
+          <div className="mt-5 overflow-hidden rounded-[28px] border border-white/8">
+            <table className="min-w-full border-separate border-spacing-0 overflow-hidden">
+              <thead className="bg-white/6 text-left text-sm uppercase tracking-[0.22em] text-slate-400">
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-slate-400">Nenhuma operacao registrada para esta conta ainda.</td>
+                  <th className="px-4 py-4">Hora</th>
+                  <th className="px-4 py-4">Tipo</th>
+                  <th className="px-4 py-4">Lote</th>
+                  <th className="px-4 py-4">Entrada</th>
+                  <th className="px-4 py-4">Resultado</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="bg-slate-950/30">
+                {liveHistory.length > 0 ? (
+                  liveHistory.map((row) => (
+                    <tr key={row.id} className="text-base even:bg-white/3">
+                      <td className="px-4 py-4 text-slate-300">{row.time}</td>
+                      <td className="px-4 py-4">{row.type}</td>
+                      <td className="px-4 py-4">{row.lot}</td>
+                      <td className="px-4 py-4 text-slate-300">{row.entry}</td>
+                      <td className={`px-4 py-4 font-semibold ${row.resultTone}`}>{liveAccount.moeda_simbolo} {row.result}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-slate-400">Nenhuma operacao encontrada para os filtros selecionados.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
     </div>
@@ -425,7 +473,15 @@ function CheckBox({ label, name, defaultChecked }: { label: string; name: string
   return <label className="flex items-center gap-3 text-sm text-slate-200"><input type="checkbox" name={name} defaultChecked={defaultChecked} className="h-4 w-4 rounded border-white/20 bg-slate-950/60" />{label}</label>;
 }
 
-function CandlestickChart({ candles, currencySymbol }: { candles: Candle[]; currencySymbol: string }) {
+function CandlestickChart({ candles, currencySymbol }: { candles: MarketCandle[]; currencySymbol: string }) {
+  if (!candles.length) {
+    return (
+      <div className="grid-sheen relative mt-5 flex h-[320px] items-center justify-center overflow-hidden rounded-[28px] border border-white/8 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.12),transparent_28%),linear-gradient(180deg,rgba(5,11,21,0.95),rgba(3,8,16,0.98))] p-4 text-center text-slate-400">
+        Aguardando stream de candles reais enviado pelo backend operacional.
+      </div>
+    );
+  }
+
   const highs = candles.map((candle) => candle.high);
   const lows = candles.map((candle) => candle.low);
   const max = Math.max(...highs);
@@ -434,7 +490,7 @@ function CandlestickChart({ candles, currencySymbol }: { candles: Candle[]; curr
   const last = candles[candles.length - 1];
 
   return (
-    <div className="grid-sheen relative mt-5 h-[420px] overflow-hidden rounded-[28px] border border-white/8 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.12),transparent_28%),linear-gradient(180deg,rgba(5,11,21,0.95),rgba(3,8,16,0.98))] p-4">
+    <div className="grid-sheen relative mt-5 h-[320px] overflow-hidden rounded-[28px] border border-white/8 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.12),transparent_28%),linear-gradient(180deg,rgba(5,11,21,0.95),rgba(3,8,16,0.98))] p-4">
       <div className="absolute inset-x-4 top-6 flex justify-between text-xs text-slate-500"><span>{currencySymbol} {max.toFixed(2)}</span><span>{currencySymbol} {((max + min) / 2).toFixed(2)}</span><span>{currencySymbol} {min.toFixed(2)}</span></div>
       <div className="absolute inset-x-4 bottom-5 top-12 flex items-end gap-2">
         {candles.map((candle, index) => {

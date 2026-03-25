@@ -2,7 +2,7 @@
 import { sendReportToN8n } from "@/lib/backend/n8n";
 import { generateAiSummary } from "@/lib/backend/openai";
 import { calculateRiskSnapshot } from "@/lib/backend/risk";
-import { countOperationsToday, loadTradingContext, recordTradingEvent, refreshDailyStats, updateAccountSnapshot } from "@/lib/backend/supabase";
+import { attachOperationTelemetry, countOperationsToday, loadTradingContext, recordTradingEvent, refreshDailyStats, updateAccountSnapshot } from "@/lib/backend/supabase";
 import type { ReportPayload, TradingEventPayload } from "@/lib/backend/types";
 
 export async function processTradingEvent(payload: TradingEventPayload) {
@@ -18,7 +18,7 @@ export async function processTradingEvent(payload: TradingEventPayload) {
   }
 
   await updateAccountSnapshot(context.account.id, payload);
-  await recordTradingEvent(context, payload);
+  const operationId = await recordTradingEvent(context, payload);
   await refreshDailyStats(context, payload);
   const operationsToday = await countOperationsToday(context.account.id);
 
@@ -68,6 +68,8 @@ export async function processTradingEvent(payload: TradingEventPayload) {
     ...baseReport,
     ai,
   };
+
+  await attachOperationTelemetry(operationId, payload, reportWithoutFormats);
 
   const report: ReportPayload = {
     ...reportWithoutFormats,

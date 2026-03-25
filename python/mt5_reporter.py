@@ -10,7 +10,8 @@ import MetaTrader5 as mt5
 import requests
 from dotenv import load_dotenv
 
-load_dotenv()
+ENV_PATH = Path(__file__).with_name(".env")
+load_dotenv(ENV_PATH)
 
 BACKEND_URL = os.getenv("LUMITRADER_BACKEND_URL", "http://localhost:3000/api/backend/trading/events")
 INGEST_TOKEN = os.getenv("LUMITRADER_INGEST_TOKEN", "")
@@ -98,7 +99,7 @@ def send_event(payload: Dict) -> None:
             "Authorization": f"Bearer {INGEST_TOKEN}",
         },
         json=payload,
-        timeout=20,
+        timeout=30,
     )
     response.raise_for_status()
     print(f"Event sent: {payload['event']} -> {payload['operation']['symbol']} -> {response.status_code}")

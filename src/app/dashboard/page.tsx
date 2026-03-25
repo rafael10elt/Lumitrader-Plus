@@ -4,34 +4,17 @@ import { signout } from "@/app/login/actions";
 import { DashboardRealtime } from "@/components/dashboard/dashboard-realtime";
 import { SignoutButton } from "@/components/auth/signout-button";
 import { requireAuthenticatedUser } from "@/lib/auth";
+import type { MarketCandle } from "@/lib/backend/types";
 
 type DashboardPageProps = {
   searchParams: Promise<{
     account?: string;
+    from?: string;
+    to?: string;
+    type?: string;
+    result?: string;
   }>;
 };
-
-const fallbackInsights = [
-  "Tendencia principal ainda favorece vendas no intraday.",
-  "RSI acima de 60 exige vigilancia para falsa continuacao.",
-  "Breakeven e trailing stop seguem armados para protecao.",
-  "Spread atual segue dentro da faixa operacional permitida.",
-];
-
-const fallbackCandles = [
-  { open: 1832.1, close: 1833.2, high: 1833.7, low: 1831.5 },
-  { open: 1833.2, close: 1831.8, high: 1834.1, low: 1831.3 },
-  { open: 1831.8, close: 1830.9, high: 1832.4, low: 1830.2 },
-  { open: 1830.9, close: 1832.7, high: 1833.2, low: 1830.5 },
-  { open: 1832.7, close: 1834.5, high: 1835.1, low: 1832.4 },
-  { open: 1834.5, close: 1833.9, high: 1835.6, low: 1833.3 },
-  { open: 1833.9, close: 1835.8, high: 1836.2, low: 1833.7 },
-  { open: 1835.8, close: 1834.8, high: 1836.4, low: 1834.4 },
-  { open: 1834.8, close: 1835.1, high: 1835.7, low: 1834.2 },
-  { open: 1835.1, close: 1834.7, high: 1835.4, low: 1834.1 },
-  { open: 1834.7, close: 1835.5, high: 1835.9, low: 1834.5 },
-  { open: 1835.5, close: 1835.3, high: 1835.8, low: 1834.9 },
-];
 
 export type DashboardLicense = {
   id: string;
@@ -63,6 +46,7 @@ export type DashboardConfig = {
   id?: string;
   conta_trading_id: string;
   ativo: string;
+  timeframe: string;
   sistema_ligado: boolean;
   modo: "agressivo" | "conservador";
   breakeven_ativo: boolean;
@@ -96,6 +80,19 @@ export type DashboardHistoryRow = {
   entry: string;
   result: string;
   resultTone: string;
+};
+
+export type DashboardHistoryFilters = {
+  from: string;
+  to: string;
+  type: string;
+  result: string;
+};
+
+export type DashboardInsightBundle = {
+  summary: string | null;
+  notes: string[];
+  candles: MarketCandle[];
 };
 
 function normalizeLicenseStatus(license: DashboardLicense) {
@@ -161,36 +158,64 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   }
 
   const selectedLicense = selectedAccount.license;
+  const historyFilters: DashboardHistoryFilters = {
+    from: params.from ?? "",
+    to: params.to ?? "",
+    type: params.type ?? "all",
+    result: params.result ?? "all",
+  };
 
-  const [{ data: config }, { data: stats }, { data: operations }] = await Promise.all([
-    supabase
-      .from("configuracoes_sessao")
-      .select("id, conta_trading_id, ativo, sistema_ligado, modo, breakeven_ativo, trailing_stop_ativo, horario_inicio, horario_fim, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria")
-      .eq("user_id", profile.id)
-      .eq("conta_trading_id", selectedAccount.id)
-      .order("atualizado_em", { ascending: false })
-      .limit(1)
-      .maybeSingle<DashboardConfig>(),
-    supabase
-      .from("estatisticas")
-      .select("conta_trading_id, operacoes_total, vitorias, derrotas, win_rate, lucro_total, prejuizo_total, drawdown, melhor_operacao, pior_operacao")
-      .eq("user_id", profile.id)
-      .eq("conta_trading_id", selectedAccount.id)
-      .order("periodo", { ascending: false })
-      .limit(1)
-      .maybeSingle<DashboardStats>(),
-    supabase
-      .from("operacoes")
-      .select("id, direcao, lote, preco_entrada, lucro_prejuizo, aberta_em")
-      .eq("user_id", profile.id)
-      .eq("conta_trading_id", selectedAccount.id)
-      .order("aberta_em", { ascending: false })
-      .limit(5),
-  ]);
+  const configQuery = supabase
+    .from("configuracoes_sessao")
+    .select("id, conta_trading_id, ativo, timeframe, sistema_ligado, modo, breakeven_ativo, trailing_stop_ativo, horario_inicio, horario_fim, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria")
+    .eq("user_id", profile.id)
+    .eq("conta_trading_id", selectedAccount.id)
+    .order("atualizado_em", { ascending: false })
+    .limit(1)
+    .maybeSingle<DashboardConfig>();
+
+  const statsQuery = supabase
+    .from("estatisticas")
+    .select("conta_trading_id, operacoes_total, vitorias, derrotas, win_rate, lucro_total, prejuizo_total, drawdown, melhor_operacao, pior_operacao")
+    .eq("user_id", profile.id)
+    .eq("conta_trading_id", selectedAccount.id)
+    .order("periodo", { ascending: false })
+    .limit(1)
+    .maybeSingle<DashboardStats>();
+
+  let operationsQuery = supabase
+    .from("operacoes")
+    .select("id, direcao, lote, preco_entrada, lucro_prejuizo, aberta_em, fechada_em, timeframe, validacao_ia")
+    .eq("user_id", profile.id)
+    .eq("conta_trading_id", selectedAccount.id)
+    .order("aberta_em", { ascending: false })
+    .limit(50);
+
+  if (historyFilters.from) {
+    operationsQuery = operationsQuery.gte("aberta_em", `${historyFilters.from}T00:00:00.000Z`);
+  }
+  if (historyFilters.to) {
+    operationsQuery = operationsQuery.lte("aberta_em", `${historyFilters.to}T23:59:59.999Z`);
+  }
+  if (historyFilters.type === "compra") {
+    operationsQuery = operationsQuery.eq("direcao", "compra");
+  }
+  if (historyFilters.type === "venda") {
+    operationsQuery = operationsQuery.eq("direcao", "venda");
+  }
+  if (historyFilters.result === "gain") {
+    operationsQuery = operationsQuery.gt("lucro_prejuizo", 0);
+  }
+  if (historyFilters.result === "loss") {
+    operationsQuery = operationsQuery.lt("lucro_prejuizo", 0);
+  }
+
+  const [{ data: config }, { data: stats }, { data: operations }] = await Promise.all([configQuery, statsQuery, operationsQuery]);
 
   const resolvedConfig: DashboardConfig = config ?? {
     conta_trading_id: selectedAccount.id,
     ativo: profile.ativo_padrao,
+    timeframe: profile.timeframe_padrao,
     sistema_ligado: false,
     modo: "agressivo",
     breakeven_ativo: true,
@@ -216,6 +241,13 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     pior_operacao: 0,
   };
 
+  const latestOperationWithAi = (operations ?? []).find((operation) => operation.validacao_ia);
+  const insightBundle: DashboardInsightBundle = {
+    summary: typeof latestOperationWithAi?.validacao_ia?.ai?.summary === "string" ? latestOperationWithAi.validacao_ia.ai.summary : null,
+    notes: Array.isArray(latestOperationWithAi?.validacao_ia?.market?.notes) ? latestOperationWithAi.validacao_ia.market.notes : [],
+    candles: Array.isArray(latestOperationWithAi?.validacao_ia?.market?.candles) ? latestOperationWithAi.validacao_ia.market.candles : [],
+  };
+
   const resolvedHistory: DashboardHistoryRow[] = operations?.length
     ? operations.map((operation) => {
         const resultValue = Number(operation.lucro_prejuizo ?? 0);
@@ -225,7 +257,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
             hour: "2-digit",
             minute: "2-digit",
             hour12: false,
-          }).format(new Date(operation.aberta_em)),
+          }).format(new Date(operation.fechada_em ?? operation.aberta_em)),
           type: operation.direcao === "compra" ? "Compra" : "Venda",
           lot: Number(operation.lote).toFixed(2),
           entry: Number(operation.preco_entrada).toFixed(2),
@@ -271,8 +303,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
             config={resolvedConfig}
             stats={resolvedStats}
             history={resolvedHistory}
-            insights={fallbackInsights}
-            candles={fallbackCandles}
+            historyFilters={historyFilters}
+            insightBundle={insightBundle}
           />
         </section>
       </div>

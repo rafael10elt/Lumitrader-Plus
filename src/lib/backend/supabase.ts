@@ -1,5 +1,5 @@
 ﻿import { createAdminClient } from "@/lib/supabase/admin";
-import type { TradingEventPayload } from "@/lib/backend/types";
+import type { ReportPayload, TradingEventPayload } from "@/lib/backend/types";
 
 type LoadedContext = {
   user: {
@@ -36,6 +36,7 @@ type LoadedContext = {
   config: {
     id: string;
     modo: "agressivo" | "conservador";
+    timeframe: string;
     breakeven_ativo: boolean;
     trailing_stop_ativo: boolean;
     meta_lucro_diaria: number;
@@ -71,7 +72,7 @@ export async function loadTradingContext(accountNumber: string): Promise<LoadedC
       .maybeSingle<LoadedContext["license"]>(),
     adminClient
       .from("configuracoes_sessao")
-      .select("id, modo, breakeven_ativo, trailing_stop_ativo, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria, ativo")
+      .select("id, modo, timeframe, breakeven_ativo, trailing_stop_ativo, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria, ativo")
       .eq("conta_trading_id", account.id)
       .order("atualizado_em", { ascending: false })
       .limit(1)
@@ -114,30 +115,34 @@ export async function recordTradingEvent(context: LoadedContext, payload: Tradin
   const adminClient = createAdminClient();
 
   if (payload.event === "operation_opened") {
-    await adminClient.from("operacoes").insert({
-      user_id: context.user.id,
-      conta_trading_id: context.account.id,
-      ativo: payload.operation.symbol,
-      timeframe: payload.operation.timeframe,
-      direcao: payload.operation.side === "buy" ? "compra" : "venda",
-      status: "aberta",
-      lote: payload.operation.lot,
-      preco_entrada: payload.operation.entry_price,
-      stop_loss: payload.operation.stop_loss ?? null,
-      take_profit: payload.operation.take_profit ?? null,
-      spread: payload.operation.spread ?? null,
-      volume: payload.operation.volume ?? null,
-      volatilidade: payload.operation.volatility ?? null,
-      be_ativo: payload.session?.breakeven_enabled ?? context.config?.breakeven_ativo ?? false,
-      ts_ativo: payload.session?.trailing_stop_enabled ?? context.config?.trailing_stop_ativo ?? false,
-      validacao_ia: {
-        ticket: payload.operation.ticket ?? null,
-        market: payload.market ?? null,
-      },
-      aberta_em: payload.operation.opened_at,
-    });
+    const { data: inserted } = await adminClient
+      .from("operacoes")
+      .insert({
+        user_id: context.user.id,
+        conta_trading_id: context.account.id,
+        ativo: payload.operation.symbol,
+        timeframe: payload.operation.timeframe,
+        direcao: payload.operation.side === "buy" ? "compra" : "venda",
+        status: "aberta",
+        lote: payload.operation.lot,
+        preco_entrada: payload.operation.entry_price,
+        stop_loss: payload.operation.stop_loss ?? null,
+        take_profit: payload.operation.take_profit ?? null,
+        spread: payload.operation.spread ?? null,
+        volume: payload.operation.volume ?? null,
+        volatilidade: payload.operation.volatility ?? null,
+        be_ativo: payload.session?.breakeven_enabled ?? context.config?.breakeven_ativo ?? false,
+        ts_ativo: payload.session?.trailing_stop_enabled ?? context.config?.trailing_stop_ativo ?? false,
+        validacao_ia: {
+          ticket: payload.operation.ticket ?? null,
+          market: payload.market ?? null,
+        },
+        aberta_em: payload.operation.opened_at,
+      })
+      .select("id")
+      .single<{ id: string }>();
 
-    return;
+    return inserted?.id ?? null;
   }
 
   const { data: latestOpen } = await adminClient
@@ -163,7 +168,61 @@ export async function recordTradingEvent(context: LoadedContext, payload: Tradin
         volatilidade: payload.operation.volatility ?? null,
       })
       .eq("id", latestOpen.id);
+
+    return latestOpen.id;
   }
+
+  const { data: inserted } = await adminClient
+    .from("operacoes")
+    .insert({
+      user_id: context.user.id,
+      conta_trading_id: context.account.id,
+      ativo: payload.operation.symbol,
+      timeframe: payload.operation.timeframe,
+      direcao: payload.operation.side === "buy" ? "compra" : "venda",
+      status: "fechada",
+      lote: payload.operation.lot,
+      preco_entrada: payload.operation.entry_price,
+      preco_saida: payload.operation.exit_price ?? null,
+      stop_loss: payload.operation.stop_loss ?? null,
+      take_profit: payload.operation.take_profit ?? null,
+      lucro_prejuizo: payload.operation.profit_loss ?? 0,
+      spread: payload.operation.spread ?? null,
+      volume: payload.operation.volume ?? null,
+      volatilidade: payload.operation.volatility ?? null,
+      be_ativo: payload.session?.breakeven_enabled ?? context.config?.breakeven_ativo ?? false,
+      ts_ativo: payload.session?.trailing_stop_enabled ?? context.config?.trailing_stop_ativo ?? false,
+      validacao_ia: {
+        ticket: payload.operation.ticket ?? null,
+        market: payload.market ?? null,
+      },
+      motivo_fechamento: payload.operation.close_reason ?? null,
+      aberta_em: payload.operation.opened_at,
+      fechada_em: payload.operation.closed_at ?? new Date().toISOString(),
+    })
+    .select("id")
+    .single<{ id: string }>();
+
+  return inserted?.id ?? null;
+}
+
+export async function attachOperationTelemetry(operationId: string | null, payload: TradingEventPayload, report: Omit<ReportPayload, "formats">) {
+  if (!operationId) {
+    return;
+  }
+
+  const adminClient = createAdminClient();
+  await adminClient
+    .from("operacoes")
+    .update({
+      validacao_ia: {
+        ticket: payload.operation.ticket ?? null,
+        market: payload.market ?? null,
+        ai: report.ai,
+        report_generated_at: report.generatedAt,
+      },
+    })
+    .eq("id", operationId);
 }
 
 export async function countOperationsToday(accountId: string) {

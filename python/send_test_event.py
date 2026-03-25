@@ -1,14 +1,22 @@
 ﻿import os
+import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 
-load_dotenv()
+ENV_PATH = Path(__file__).with_name(".env")
+load_dotenv(ENV_PATH)
 
 BACKEND_URL = os.getenv("LUMITRADER_BACKEND_URL", "http://localhost:3000/api/backend/trading/events")
 INGEST_TOKEN = os.getenv("LUMITRADER_INGEST_TOKEN", "")
 ACCOUNT_NUMBER = os.getenv("MT5_LOGIN", "12345678")
+
+
+def safe_print(value: str) -> None:
+    encoding = sys.stdout.encoding or "utf-8"
+    print(value.encode(encoding, errors="replace").decode(encoding, errors="replace"))
 
 
 def build_payload(event: str) -> dict:
@@ -87,10 +95,10 @@ def main() -> None:
             "Authorization": f"Bearer {INGEST_TOKEN}",
         },
         json=payload,
-        timeout=20,
+        timeout=30,
     )
     print(response.status_code)
-    print(response.text)
+    safe_print(response.text)
     response.raise_for_status()
 
 
