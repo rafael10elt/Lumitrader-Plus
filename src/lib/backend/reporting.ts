@@ -17,6 +17,16 @@ export async function processTradingEvent(payload: TradingEventPayload) {
     throw new Error("Licenca inativa, bloqueada ou expirada para esta conta MT5.");
   }
 
+  if (payload.event === "account_sync") {
+    await updateAccountSnapshot(context.account.id, payload);
+    return { synced: true, account: payload.account.number };
+  }
+
+  if (!payload.operation) {
+    throw new Error("Operacao obrigatoria para este evento.");
+  }
+
+  const operationPayload = payload.operation;
   await updateAccountSnapshot(context.account.id, payload);
   const operationId = await recordTradingEvent(context, payload);
   await refreshDailyStats(context, payload);
@@ -59,7 +69,7 @@ export async function processTradingEvent(payload: TradingEventPayload) {
         value: context.license.valor,
       },
     },
-    operation: payload.operation,
+    operation: operationPayload,
     risk,
   };
 
@@ -70,6 +80,7 @@ export async function processTradingEvent(payload: TradingEventPayload) {
   };
 
   await attachOperationTelemetry(operationId, payload, reportWithoutFormats);
+  await updateAccountSnapshot(context.account.id, payload, ai.summary);
 
   const report: ReportPayload = {
     ...reportWithoutFormats,

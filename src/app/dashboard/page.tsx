@@ -40,6 +40,13 @@ export type DashboardAccount = {
   nivel_margem: number | null;
   ativo: boolean;
   atualizado_em: string;
+  server_time: string | null;
+  mercado_snapshot: {
+    notes?: string[];
+    candles?: MarketCandle[];
+  } | null;
+  insight_atual: string | null;
+  ultima_sincronizacao: string | null;
 };
 
 export type DashboardConfig = {
@@ -114,7 +121,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const [{ data: accounts }, { data: licenses }] = await Promise.all([
     supabase
       .from("contas_trading")
-      .select("id, user_id, nome_cliente, numero_conta, corretora, moeda_codigo, moeda_simbolo, saldo_atual, equity, margem_livre, nivel_margem, ativo, atualizado_em")
+      .select("id, user_id, nome_cliente, numero_conta, corretora, moeda_codigo, moeda_simbolo, saldo_atual, equity, margem_livre, nivel_margem, ativo, atualizado_em, server_time, mercado_snapshot, insight_atual, ultima_sincronizacao")
       .eq("user_id", profile.id)
       .order("criado_em", { ascending: false }),
     supabase
@@ -242,10 +249,12 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   };
 
   const latestOperationWithAi = (operations ?? []).find((operation) => operation.validacao_ia);
+  const accountNotes = Array.isArray(selectedAccount.mercado_snapshot?.notes) ? selectedAccount.mercado_snapshot.notes : [];
+  const accountCandles = Array.isArray(selectedAccount.mercado_snapshot?.candles) ? selectedAccount.mercado_snapshot.candles : [];
   const insightBundle: DashboardInsightBundle = {
-    summary: typeof latestOperationWithAi?.validacao_ia?.ai?.summary === "string" ? latestOperationWithAi.validacao_ia.ai.summary : null,
-    notes: Array.isArray(latestOperationWithAi?.validacao_ia?.market?.notes) ? latestOperationWithAi.validacao_ia.market.notes : [],
-    candles: Array.isArray(latestOperationWithAi?.validacao_ia?.market?.candles) ? latestOperationWithAi.validacao_ia.market.candles : [],
+    summary: selectedAccount.insight_atual ?? (typeof latestOperationWithAi?.validacao_ia?.ai?.summary === "string" ? latestOperationWithAi.validacao_ia.ai.summary : null),
+    notes: accountNotes.length > 0 ? accountNotes : (Array.isArray(latestOperationWithAi?.validacao_ia?.market?.notes) ? latestOperationWithAi.validacao_ia.market.notes : []),
+    candles: accountCandles.length > 0 ? accountCandles : (Array.isArray(latestOperationWithAi?.validacao_ia?.market?.candles) ? latestOperationWithAi.validacao_ia.market.candles : []),
   };
 
   const resolvedHistory: DashboardHistoryRow[] = operations?.length

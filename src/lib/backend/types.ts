@@ -7,11 +7,12 @@
 };
 
 export type TradingEventPayload = {
-  event: "operation_opened" | "operation_closed";
+  event: "account_sync" | "operation_opened" | "operation_closed";
   account: {
     number: string;
     broker?: string;
     server?: string;
+    server_time?: string;
     name?: string;
     currency_code?: string;
     currency_symbol?: string;
@@ -22,7 +23,7 @@ export type TradingEventPayload = {
     margin_level?: number;
     leverage?: number;
   };
-  operation: {
+  operation?: {
     ticket?: string;
     symbol: string;
     timeframe: string;
@@ -71,7 +72,7 @@ export type RiskSnapshot = {
 };
 
 export type ReportPayload = {
-  event: TradingEventPayload["event"];
+  event: Exclude<TradingEventPayload["event"], "account_sync">;
   generatedAt: string;
   user: {
     id: string;
@@ -95,7 +96,7 @@ export type ReportPayload = {
       value: number;
     };
   };
-  operation: TradingEventPayload["operation"];
+  operation: NonNullable<TradingEventPayload["operation"]>;
   risk: RiskSnapshot;
   ai: {
     summary: string;

@@ -90,7 +90,7 @@ export async function loadTradingContext(accountNumber: string): Promise<LoadedC
   return { user, account, license, config };
 }
 
-export async function updateAccountSnapshot(accountId: string, payload: TradingEventPayload) {
+export async function updateAccountSnapshot(accountId: string, payload: TradingEventPayload, insightSummary?: string | null) {
   const adminClient = createAdminClient();
   await adminClient
     .from("contas_trading")
@@ -106,6 +106,10 @@ export async function updateAccountSnapshot(accountId: string, payload: TradingE
       margem_livre: payload.account.free_margin ?? undefined,
       nivel_margem: payload.account.margin_level ?? undefined,
       alavancagem: payload.account.leverage ?? undefined,
+      server_time: payload.account.server_time ?? null,
+      mercado_snapshot: payload.market ?? null,
+      insight_atual: insightSummary ?? undefined,
+      ultima_sincronizacao: new Date().toISOString(),
       ativo: true,
     })
     .eq("id", accountId);
@@ -113,6 +117,10 @@ export async function updateAccountSnapshot(accountId: string, payload: TradingE
 
 export async function recordTradingEvent(context: LoadedContext, payload: TradingEventPayload) {
   const adminClient = createAdminClient();
+
+  if (!payload.operation) {
+    return null;
+  }
 
   if (payload.event === "operation_opened") {
     const { data: inserted } = await adminClient
@@ -203,11 +211,11 @@ export async function recordTradingEvent(context: LoadedContext, payload: Tradin
     .select("id")
     .single<{ id: string }>();
 
-  return inserted?.id ?? null;
+    return inserted?.id ?? null;
 }
 
 export async function attachOperationTelemetry(operationId: string | null, payload: TradingEventPayload, report: Omit<ReportPayload, "formats">) {
-  if (!operationId) {
+  if (!operationId || !payload.operation) {
     return;
   }
 
@@ -240,6 +248,10 @@ export async function countOperationsToday(accountId: string) {
 }
 
 export async function refreshDailyStats(context: LoadedContext, payload: TradingEventPayload) {
+  if (!payload.operation) {
+    return;
+  }
+
   const adminClient = createAdminClient();
   const today = new Date().toISOString().slice(0, 10);
   const { data: operations } = await adminClient

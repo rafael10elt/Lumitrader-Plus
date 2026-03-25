@@ -59,6 +59,10 @@ function formatTimeRange(start: string, end: string) {
   return `${start.slice(0, 5)}-${end.slice(0, 5)}`;
 }
 
+function formatDate(date: string) {
+  return new Intl.DateTimeFormat("pt-BR").format(new Date(`${date}T00:00:00`));
+}
+
 export function DashboardRealtime({
   profile,
   accounts,
@@ -72,7 +76,7 @@ export function DashboardRealtime({
   insightBundle,
 }: DashboardRealtimeProps) {
   const supabase = createClient();
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const [liveAccount, setLiveAccount] = useState(account);
   const [liveConfig, setLiveConfig] = useState(config);
   const [liveStats, setLiveStats] = useState(stats);
@@ -91,7 +95,7 @@ export function DashboardRealtime({
     const [{ data: nextAccount }, { data: nextConfig }, { data: nextStats }, { data: nextOperations }] = await Promise.all([
       supabase
         .from("contas_trading")
-        .select("id, user_id, nome_cliente, numero_conta, corretora, moeda_codigo, moeda_simbolo, saldo_atual, equity, margem_livre, nivel_margem, ativo, atualizado_em")
+        .select("id, user_id, nome_cliente, numero_conta, corretora, moeda_codigo, moeda_simbolo, saldo_atual, equity, margem_livre, nivel_margem, ativo, atualizado_em, server_time, mercado_snapshot, insight_atual, ultima_sincronizacao")
         .eq("id", selectedAccountId)
         .maybeSingle<DashboardAccount>(),
       supabase
@@ -119,6 +123,13 @@ export function DashboardRealtime({
     startTransition(() => {
       if (nextAccount) {
         setLiveAccount(nextAccount);
+        const snapshotNotes = Array.isArray(nextAccount.mercado_snapshot?.notes) ? nextAccount.mercado_snapshot.notes : [];
+        const snapshotCandles = Array.isArray(nextAccount.mercado_snapshot?.candles) ? nextAccount.mercado_snapshot.candles : [];
+        setLiveInsightBundle((current) => ({
+          summary: nextAccount.insight_atual ?? current.summary,
+          notes: snapshotNotes.length > 0 ? snapshotNotes : current.notes,
+          candles: snapshotCandles.length > 0 ? snapshotCandles : current.candles,
+        }));
       }
       if (nextConfig) {
         setLiveConfig(nextConfig);
@@ -147,11 +158,11 @@ export function DashboardRealtime({
 
         const latestTelemetry = nextOperations.find((operation) => operation.validacao_ia);
         if (latestTelemetry?.validacao_ia) {
-          setLiveInsightBundle({
-            summary: typeof latestTelemetry.validacao_ia.ai?.summary === "string" ? latestTelemetry.validacao_ia.ai.summary : null,
-            notes: Array.isArray(latestTelemetry.validacao_ia.market?.notes) ? latestTelemetry.validacao_ia.market.notes : [],
-            candles: Array.isArray(latestTelemetry.validacao_ia.market?.candles) ? latestTelemetry.validacao_ia.market.candles : [],
-          });
+          setLiveInsightBundle((current) => ({
+            summary: typeof latestTelemetry.validacao_ia.ai?.summary === "string" ? latestTelemetry.validacao_ia.ai.summary : current.summary,
+            notes: Array.isArray(latestTelemetry.validacao_ia.market?.notes) ? latestTelemetry.validacao_ia.market.notes : current.notes,
+            candles: Array.isArray(latestTelemetry.validacao_ia.market?.candles) ? latestTelemetry.validacao_ia.market.candles : current.candles,
+          }));
         }
       }
     });
@@ -189,12 +200,22 @@ export function DashboardRealtime({
 
   const floatingProfit = (liveAccount.equity ?? 0) - (liveAccount.saldo_atual ?? 0);
   const isSystemOnline = liveConfig.sistema_ligado && Boolean(liveAccount.ativo);
-  const currentClockLabel = new Intl.DateTimeFormat("pt-BR", {
+  const brasiliaClockLabel = new Intl.DateTimeFormat("pt-BR", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
     hour12: false,
+    timeZone: "America/Sao_Paulo",
   }).format(liveNow);
+  const serverClockLabel = liveAccount.server_time
+    ? new Intl.DateTimeFormat("pt-BR", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+        timeZone: "UTC",
+      }).format(new Date(liveAccount.server_time))
+    : "--:--:--";
 
   return (
     <div className="mt-5 grid gap-6">
@@ -213,14 +234,13 @@ export function DashboardRealtime({
             <p className="mt-2 text-sm text-slate-300">Cada conta MT5 opera de forma independente com limites, saldo, equity e metricas proprios.</p>
           </div>
           <form action="/dashboard" className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <select name="account" defaultValue={selectedAccountId} className="rounded-[18px] border border-white/10 bg-slate-950/60 px-4 py-3 text-white outline-none">
+            <select name="account" defaultValue={selectedAccountId} onChange={(event) => event.currentTarget.form?.requestSubmit()} className="rounded-[18px] border border-white/10 bg-slate-950/60 px-4 py-3 text-white outline-none">
               {accounts.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.numero_conta} · {item.nome_cliente} · expira {item.license.data_expiracao}
+                  {item.numero_conta} · {item.nome_cliente} · expira {formatDate(item.license.data_expiracao)}
                 </option>
               ))}
             </select>
-            <button className="rounded-[18px] border border-cyan-400/30 bg-cyan-400/10 px-4 py-3 text-sm font-semibold text-cyan-100">Trocar conta</button>
           </form>
         </div>
       </div>
@@ -229,18 +249,21 @@ export function DashboardRealtime({
         <div className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <InfoCard eyebrow="Cliente" title={liveAccount.nome_cliente ?? profile.nome ?? "Trader"} detail={`Email: ${profile.email ?? "nao informado"}`} />
-            <InfoCard eyebrow="Licenca" title={`${selectedLicense.status.toUpperCase()} ate ${selectedLicense.data_expiracao}`} detail={`Valor ${formatLicenseCurrency(selectedLicense.valor)}`} />
+            <InfoCard eyebrow="Licenca" title={`${selectedLicense.status.toUpperCase()} ate ${formatDate(selectedLicense.data_expiracao)}`} detail={`Valor ${formatLicenseCurrency(selectedLicense.valor)}`} />
             <InfoCard eyebrow="Janela Operacional" title={formatTimeRange(liveConfig.horario_inicio, liveConfig.horario_fim)} detail={`${liveConfig.breakeven_ativo ? "Breakeven ON" : "Breakeven OFF"} / ${liveConfig.trailing_stop_ativo ? "Trailing ON" : "Trailing OFF"}`} />
           </div>
 
-          <div className="grid gap-4 md:grid-cols-[1.1fr_0.9fr]">
+          <div className="grid gap-4 md:grid-cols-[1.08fr_0.92fr]">
             <div className="glass-panel rounded-[28px] p-4 sm:p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="font-mono text-xs uppercase tracking-[0.3em] text-cyan-200/70">Controle Central</p>
                   <h2 className="mt-1 text-2xl font-semibold">{isSystemOnline ? "Auto trader armado" : "Sistema aguardando backend operacional"}</h2>
                 </div>
-                <span className="rounded-full border border-lime-400/30 bg-lime-400/10 px-3 py-1 text-sm font-medium text-lime-300">{isPending ? "Sincronizando" : currentClockLabel}</span>
+                <div className="rounded-[18px] border border-lime-400/30 bg-lime-400/10 px-3 py-2 text-xs text-lime-300">
+                  <div>Servidor: {serverClockLabel}</div>
+                  <div>Brasilia: {brasiliaClockLabel}</div>
+                </div>
               </div>
 
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -302,6 +325,7 @@ export function DashboardRealtime({
             <form className="mt-4 grid gap-4 md:grid-cols-2">
               <input type="hidden" name="config_id" value={liveConfig.id ?? ""} />
               <input type="hidden" name="conta_trading_id" value={selectedAccountId} />
+              <input type="hidden" name="current_system_state" value={String(liveConfig.sistema_ligado)} />
               <SettingsField label="Ativo" name="ativo" defaultValue={liveConfig.ativo} />
               <label className="grid gap-2">
                 <span className="text-sm text-slate-300">Timeframe</span>
@@ -322,7 +346,6 @@ export function DashboardRealtime({
               <SettingsField label="Perda maxima diaria" name="perda_maxima_diaria" type="number" defaultValue={String(liveConfig.perda_maxima_diaria)} />
               <SettingsField label="Limite de operacoes" name="limite_operacoes_diaria" type="number" defaultValue={String(liveConfig.limite_operacoes_diaria ?? "")} />
               <div className="grid gap-3 rounded-[18px] border border-white/8 bg-slate-950/35 p-4">
-                <CheckBox label="Sistema ligado" name="sistema_ligado" defaultChecked={liveConfig.sistema_ligado} />
                 <CheckBox label="Breakeven ativo" name="breakeven_ativo" defaultChecked={liveConfig.breakeven_ativo} />
                 <CheckBox label="Trailing stop ativo" name="trailing_stop_ativo" defaultChecked={liveConfig.trailing_stop_ativo} />
                 <CheckBox label="Limite de operacoes ativo" name="limite_operacoes_ativo" defaultChecked={liveConfig.limite_operacoes_ativo} />
@@ -364,11 +387,11 @@ export function DashboardRealtime({
               {liveInsightBundle.summary ? (
                 <div className="rounded-[24px] border border-cyan-400/20 bg-cyan-400/10 p-4 text-slate-100">{liveInsightBundle.summary}</div>
               ) : (
-                <div className="rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-400">Aguardando novo evento operacional com analise de IA.</div>
+                <div className="rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-400">Aguardando primeiro ciclo real do backend operacional para esta conta.</div>
               )}
-              {liveInsightBundle.notes.length > 0 ? liveInsightBundle.notes.map((insight) => (
+              {liveInsightBundle.notes.map((insight) => (
                 <div key={insight} className="rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-100"><span className="mr-3 text-lime-300">✓</span>{insight}</div>
-              )) : null}
+              ))}
             </div>
           </div>
         </div>
@@ -458,7 +481,7 @@ function QuickFact({ label, value }: { label: string; value: string }) {
 }
 
 function DataRow({ label, value }: { label: string; value: string }) {
-  return <div className="flex items-center justify-between border-b border-white/6 pb-3 last:border-b-0 last:pb-0"><span className="text-slate-400">{label}</span><span className="font-semibold">{value}</span></div>;
+  return <div className="flex items-center justify-between border-b border-white/6 pb-3 last:border-b-0 last:pb-0"><span className="text-slate-400">{label}</span><span className="font-semibold text-right">{value}</span></div>;
 }
 
 function StatRow({ label, value, valueTone = "text-white" }: { label: string; value: string; valueTone?: string }) {

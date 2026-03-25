@@ -4,14 +4,23 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
 ENV_PATH = Path(__file__).with_name(".env")
-load_dotenv(ENV_PATH)
+
+
+def load_env_file() -> None:
+    values = dotenv_values(ENV_PATH, encoding="utf-8-sig")
+    for key, value in values.items():
+        if key and value is not None:
+            os.environ[key] = value
+
+
+load_env_file()
 
 BACKEND_URL = os.getenv("LUMITRADER_BACKEND_URL", "http://localhost:3000/api/backend/trading/events")
 INGEST_TOKEN = os.getenv("LUMITRADER_INGEST_TOKEN", "")
-ACCOUNT_NUMBER = os.getenv("MT5_LOGIN", "12345678")
+ACCOUNT_NUMBER = os.getenv("TEST_ACCOUNT_NUMBER", "1512756960")
 
 
 def safe_print(value: str) -> None:
@@ -48,6 +57,7 @@ def build_payload(event: str) -> dict:
             "number": str(ACCOUNT_NUMBER),
             "broker": "FTMO",
             "server": "FTMO-Demo",
+            "server_time": closed_at,
             "name": "Conta de teste",
             "currency_code": "USD",
             "currency_symbol": "$",
@@ -74,9 +84,11 @@ def build_payload(event: str) -> dict:
             "moving_average_20": 3038.10,
             "support": 3029.30,
             "resistance": 3042.50,
-            "notes": [
-                "Teste manual do fluxo backend + Supabase + OpenAI + n8n"
-            ],
+            "notes": ["Teste manual do fluxo backend + Supabase + OpenAI + n8n"],
+            "candles": [
+                {"time": opened_at, "open": 3036.1, "high": 3037.2, "low": 3034.8, "close": 3035.4},
+                {"time": closed_at, "open": 3035.4, "high": 3036.0, "low": 3032.4, "close": 3032.65}
+            ]
         },
     }
 

@@ -103,7 +103,6 @@ export async function saveLicense(formData: FormData) {
   const licenseId = textValue(formData, "license_id");
   const userId = textValue(formData, "user_id");
   const numeroConta = textValue(formData, "numero_conta");
-  const mt5Login = textValue(formData, "mt5_login");
   const mt5Server = textValue(formData, "mt5_server");
   const mt5Password = textValue(formData, "mt5_password");
   const valorInput = textValue(formData, "valor");
@@ -145,7 +144,6 @@ export async function saveLicense(formData: FormData) {
         .from("contas_trading")
         .update({
           numero_conta: numeroConta,
-          mt5_login: mt5Login || numeroConta,
           mt5_server: mt5Server || null,
           mt5_password: mt5Password || null,
         })
@@ -163,7 +161,6 @@ export async function saveLicense(formData: FormData) {
         corretora: null,
         moeda_codigo: "USD",
         moeda_simbolo: "$",
-        mt5_login: mt5Login || numeroConta,
         mt5_server: mt5Server || null,
         mt5_password: mt5Password || null,
       })

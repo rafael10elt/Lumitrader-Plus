@@ -15,6 +15,21 @@ export function calculateRiskSnapshot(input: {
 }): RiskSnapshot {
   const { payload, balance, equity, operationsToday, sessionConfig } = input;
   const operation = payload.operation;
+
+  if (!operation) {
+    return {
+      riskAmount: 0,
+      rewardAmount: null,
+      riskRewardRatio: null,
+      floatingDifference: equity - balance,
+      spreadCostEstimate: null,
+      remainingDailyLoss: typeof sessionConfig?.daily_loss_limit === "number" ? sessionConfig.daily_loss_limit : null,
+      remainingOperationsToday: sessionConfig?.operation_limit_enabled && typeof sessionConfig.operation_limit === "number"
+        ? Math.max(sessionConfig.operation_limit - operationsToday, 0)
+        : null,
+    };
+  }
+
   const stopDistance = operation.stop_loss ? Math.abs(operation.entry_price - operation.stop_loss) : null;
   const targetDistance = operation.take_profit ? Math.abs(operation.take_profit - operation.entry_price) : null;
   const riskAmount = stopDistance ? stopDistance * operation.lot * 100 : 0;

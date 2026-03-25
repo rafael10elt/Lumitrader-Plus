@@ -18,8 +18,12 @@ export async function POST(request: Request) {
   try {
     const payload = (await request.json()) as TradingEventPayload;
 
-    if (!payload?.event || !payload?.account?.number || !payload?.operation?.symbol) {
+    if (!payload?.event || !payload?.account?.number) {
       return NextResponse.json({ ok: false, error: "Invalid payload" }, { status: 400 });
+    }
+
+    if (payload.event !== "account_sync" && !payload?.operation?.symbol) {
+      return NextResponse.json({ ok: false, error: "Operation payload required" }, { status: 400 });
     }
 
     const report = await processTradingEvent(payload);

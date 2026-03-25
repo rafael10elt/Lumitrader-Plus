@@ -2,9 +2,9 @@
 
 Arquivos:
 
-- `mt5_reporter.py`: monitora aberturas e fechamentos no MT5 e envia eventos para o backend.
-- `send_test_event.py`: dispara um evento de teste sem depender de uma operacao real.
-- `.env.example`: variaveis para os scripts.
+- `mt5_reporter.py`: bridge multi-conta para VPS Windows com MT5 aberto.
+- `send_test_event.py`: dispara um evento de teste manual no backend.
+- `.env.example`: variaveis do bridge.
 - `requirements.txt`: dependencias Python.
 
 Uso rapido:
@@ -16,20 +16,20 @@ python send_test_event.py
 python mt5_reporter.py
 ```
 
-O `send_test_event.py` ajuda a validar o fluxo inteiro: backend, Supabase, OpenAI e n8n.
+O `mt5_reporter.py` nao depende mais de login, servidor e senha no `.env`.
+Esses dados passam a vir do banco, por conta/licenca, sempre que a conta estiver em `Play`.
 
-O `mt5_reporter.py` faz polling das posicoes abertas e do historico do dia no MT5.
-Quando detecta uma abertura, envia `operation_opened`.
-Quando detecta um fechamento, envia `operation_closed`.
-
-Header usado no backend:
+A `.env` da pasta `python` agora precisa ter apenas:
 
 ```txt
-Authorization: Bearer LUMITRADER_INGEST_TOKEN
+LUMITRADER_BACKEND_URL
+LUMITRADER_INGEST_TOKEN
+POLL_INTERVAL_SECONDS
 ```
 
-URL esperada:
+Fluxo do bridge:
 
-```txt
-https://lumitrader.lumitechia.com.br/api/backend/trading/events
-```
+1. Busca no backend quais contas estao ativas e em `Play`.
+2. Faz login sequencial nelas no MT5 da VPS.
+3. Envia `account_sync` com saldo, equity, corretora, horario do servidor e candles.
+4. Envia `operation_opened` e `operation_closed` quando detectar ordens.

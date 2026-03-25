@@ -4,22 +4,37 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict, List
 
 import MetaTrader5 as mt5
 import requests
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
 ENV_PATH = Path(__file__).with_name(".env")
-load_dotenv(ENV_PATH)
 
-BACKEND_URL = os.getenv("LUMITRADER_BACKEND_URL", "http://localhost:3000/api/backend/trading/events")
+
+def load_env_file() -> None:
+    values = dotenv_values(ENV_PATH, encoding="utf-8-sig")
+    for key, value in values.items():
+        if key and value is not None:
+            os.environ[key] = value
+
+
+load_env_file()
+
+EVENTS_URL = os.getenv("LUMITRADER_BACKEND_URL", "http://localhost:3000/api/backend/trading/events")
+BRIDGE_ACCOUNTS_URL = EVENTS_URL.replace("/trading/events", "/bridge/accounts")
 INGEST_TOKEN = os.getenv("LUMITRADER_INGEST_TOKEN", "")
-MT5_LOGIN = int(os.getenv("MT5_LOGIN", "0"))
-MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
-MT5_SERVER = os.getenv("MT5_SERVER", "")
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "3"))
 STATE_PATH = Path(__file__).with_name("state.json")
+
+TIMEFRAME_MAP = {
+    "M1": mt5.TIMEFRAME_M1,
+    "M5": mt5.TIMEFRAME_M5,
+    "M15": mt5.TIMEFRAME_M15,
+    "M30": mt5.TIMEFRAME_M30,
+    "H1": mt5.TIMEFRAME_H1,
+}
 
 
 @dataclass
@@ -39,32 +54,59 @@ def utc_iso(timestamp: int) -> str:
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def load_state() -> Dict[str, Dict]:
+def load_state() -> Dict[str, Dict[str, Any]]:
     if not STATE_PATH.exists():
-        return {"open_positions": {}, "recent_history_ids": []}
+        return {"accounts": {}}
     return json.loads(STATE_PATH.read_text(encoding="utf-8"))
 
 
-def save_state(state: Dict[str, Dict]) -> None:
+def save_state(state: Dict[str, Dict[str, Any]]) -> None:
     STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
-def initialize_mt5() -> None:
-    if not mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER):
+def fetch_active_accounts() -> List[Dict[str, Any]]:
+    response = requests.get(
+        BRIDGE_ACCOUNTS_URL,
+        headers={"Authorization": f"Bearer {INGEST_TOKEN}"},
+        timeout=30,
+    )
+    response.raise_for_status()
+    data = response.json()
+    return data.get("accounts", [])
+
+
+def ensure_terminal() -> None:
+    if not mt5.initialize():
         raise RuntimeError(f"MT5 initialize failed: {mt5.last_error()}")
 
 
-def account_payload() -> Dict:
+def login_account(account: Dict[str, Any]) -> None:
+    ensure_terminal()
+    login = int(account["number"])
+    password = account["password"]
+    server = account["server"]
+    if not mt5.login(login=login, password=password, server=server):
+        raise RuntimeError(f"MT5 login failed for {login}: {mt5.last_error()}")
+
+
+def account_payload(symbol: str | None = None) -> Dict[str, Any]:
     account = mt5.account_info()
     if account is None:
         raise RuntimeError("MT5 account_info returned None")
 
     currency_code = account.currency or "USD"
     currency_symbol = "$" if currency_code == "USD" else "R$" if currency_code == "BRL" else currency_code
+    server_time = None
+    if symbol:
+        tick = mt5.symbol_info_tick(symbol)
+        if tick:
+            server_time = utc_iso(tick.time)
+
     return {
         "number": str(account.login),
         "broker": getattr(account, "company", None),
         "server": account.server,
+        "server_time": server_time,
         "name": account.name,
         "currency_code": currency_code,
         "currency_symbol": currency_symbol,
@@ -91,9 +133,41 @@ def build_position_snapshot(position) -> PositionSnapshot:
     )
 
 
-def send_event(payload: Dict) -> None:
+def build_market_payload(symbol: str, timeframe_name: str) -> Dict[str, Any]:
+    timeframe = TIMEFRAME_MAP.get(timeframe_name, mt5.TIMEFRAME_M5)
+    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, 40) or []
+    candles = [
+        {
+            "time": utc_iso(int(rate["time"])),
+            "open": float(rate["open"]),
+            "high": float(rate["high"]),
+            "low": float(rate["low"]),
+            "close": float(rate["close"]),
+        }
+        for rate in rates
+    ]
+
+    tick = mt5.symbol_info_tick(symbol)
+    symbol_info = mt5.symbol_info(symbol)
+    notes = [f"Sync do mercado para {symbol} em {timeframe_name}."]
+
+    return {
+        "trend": None,
+        "rsi": None,
+        "moving_average_20": None,
+        "support": None,
+        "resistance": None,
+        "notes": notes,
+        "candles": candles,
+        "spread": float(symbol_info.spread) if symbol_info else None,
+        "last_bid": float(tick.bid) if tick else None,
+        "last_ask": float(tick.ask) if tick else None,
+    }
+
+
+def send_event(payload: Dict[str, Any]) -> None:
     response = requests.post(
-        BACKEND_URL,
+        EVENTS_URL,
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {INGEST_TOKEN}",
@@ -102,23 +176,63 @@ def send_event(payload: Dict) -> None:
         timeout=30,
     )
     response.raise_for_status()
-    print(f"Event sent: {payload['event']} -> {payload['operation']['symbol']} -> {response.status_code}")
+    operation = payload.get("operation") or {}
+    symbol = operation.get("symbol", "sync")
+    print(f"Event sent: {payload['event']} -> {symbol} -> {response.status_code}")
 
 
-def handle_open_positions(state: Dict) -> None:
-    current_positions = mt5.positions_get() or []
+def sync_account(account_config: Dict[str, Any]) -> Dict[str, Any]:
+    config = account_config.get("config") or {}
+    symbol = config.get("ativo") or "XAUUSD"
+    timeframe = config.get("timeframe") or "M5"
+    market = build_market_payload(symbol, timeframe)
+    payload = {
+        "event": "account_sync",
+        "account": account_payload(symbol),
+        "session": {
+            "mode": config.get("modo"),
+            "breakeven_enabled": config.get("breakeven_ativo"),
+            "trailing_stop_enabled": config.get("trailing_stop_ativo"),
+            "profit_target": config.get("meta_lucro_diaria"),
+            "daily_loss_limit": config.get("perda_maxima_diaria"),
+            "operation_limit_enabled": config.get("limite_operacoes_ativo"),
+            "operation_limit": config.get("limite_operacoes_diaria"),
+        },
+        "market": market,
+    }
+    send_event(payload)
+    return payload
+
+
+def handle_open_positions(account_config: Dict[str, Any], account_state: Dict[str, Any]) -> None:
+    config = account_config.get("config") or {}
+    symbol_filter = config.get("ativo")
+    current_positions = mt5.positions_get(symbol=symbol_filter) if symbol_filter else mt5.positions_get()
+    current_positions = current_positions or []
     current_map = {str(position.ticket): build_position_snapshot(position) for position in current_positions}
-    account = account_payload()
+    account = account_payload(symbol_filter)
+    timeframe = config.get("timeframe") or "M5"
+    market = build_market_payload(symbol_filter or current_positions[0].symbol if current_positions else "XAUUSD", timeframe)
 
     for ticket, snapshot in current_map.items():
-        if ticket not in state["open_positions"]:
+        if ticket not in account_state["open_positions"]:
             payload = {
                 "event": "operation_opened",
                 "account": account,
+                "session": {
+                    "mode": config.get("modo"),
+                    "breakeven_enabled": config.get("breakeven_ativo"),
+                    "trailing_stop_enabled": config.get("trailing_stop_ativo"),
+                    "profit_target": config.get("meta_lucro_diaria"),
+                    "daily_loss_limit": config.get("perda_maxima_diaria"),
+                    "operation_limit_enabled": config.get("limite_operacoes_ativo"),
+                    "operation_limit": config.get("limite_operacoes_diaria"),
+                },
+                "market": market,
                 "operation": {
                     "ticket": ticket,
                     "symbol": snapshot.symbol,
-                    "timeframe": "M5",
+                    "timeframe": timeframe,
                     "side": snapshot.side,
                     "lot": snapshot.lot,
                     "entry_price": snapshot.entry_price,
@@ -130,15 +244,19 @@ def handle_open_positions(state: Dict) -> None:
             }
             send_event(payload)
 
-    state["open_positions"] = {ticket: snapshot.__dict__ for ticket, snapshot in current_map.items()}
+    account_state["open_positions"] = {ticket: snapshot.__dict__ for ticket, snapshot in current_map.items()}
 
 
-def handle_closed_positions(state: Dict) -> None:
+def handle_closed_positions(account_config: Dict[str, Any], account_state: Dict[str, Any]) -> None:
+    config = account_config.get("config") or {}
+    symbol = config.get("ativo") or "XAUUSD"
+    timeframe = config.get("timeframe") or "M5"
     start_of_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     history = mt5.history_deals_get(start_of_day, datetime.now(timezone.utc)) or []
-    account = account_payload()
-    recent_history_ids = set(state.get("recent_history_ids", []))
-    open_positions = state.get("open_positions", {})
+    account = account_payload(symbol)
+    market = build_market_payload(symbol, timeframe)
+    recent_history_ids = set(account_state.get("recent_history_ids", []))
+    open_positions = account_state.get("open_positions", {})
 
     for deal in history:
         if deal.entry != mt5.DEAL_ENTRY_OUT:
@@ -151,10 +269,20 @@ def handle_closed_positions(state: Dict) -> None:
         payload = {
             "event": "operation_closed",
             "account": account,
+            "session": {
+                "mode": config.get("modo"),
+                "breakeven_enabled": config.get("breakeven_ativo"),
+                "trailing_stop_enabled": config.get("trailing_stop_ativo"),
+                "profit_target": config.get("meta_lucro_diaria"),
+                "daily_loss_limit": config.get("perda_maxima_diaria"),
+                "operation_limit_enabled": config.get("limite_operacoes_ativo"),
+                "operation_limit": config.get("limite_operacoes_diaria"),
+            },
+            "market": market,
             "operation": {
                 "ticket": position_id,
                 "symbol": deal.symbol,
-                "timeframe": "M5",
+                "timeframe": timeframe,
                 "side": cached_position["side"] if cached_position else "buy",
                 "lot": float(deal.volume),
                 "entry_price": float(cached_position["entry_price"]) if cached_position else float(deal.price),
@@ -172,26 +300,44 @@ def handle_closed_positions(state: Dict) -> None:
         if position_id in open_positions:
             del open_positions[position_id]
 
-    state["open_positions"] = open_positions
-    state["recent_history_ids"] = list(recent_history_ids)[-200:]
+    account_state["open_positions"] = open_positions
+    account_state["recent_history_ids"] = list(recent_history_ids)[-200:]
 
 
 def main() -> None:
     if not INGEST_TOKEN:
         raise RuntimeError("Missing LUMITRADER_INGEST_TOKEN")
-    initialize_mt5()
-    state = load_state()
-    state.setdefault("open_positions", {})
-    state.setdefault("recent_history_ids", [])
 
+    state = load_state()
+    state.setdefault("accounts", {})
     print("Lumitrader MT5 reporter started")
+
     while True:
         try:
-            handle_open_positions(state)
-            handle_closed_positions(state)
+            accounts = fetch_active_accounts()
+            active_numbers = set()
+            for account in accounts:
+                number = str(account["number"])
+                active_numbers.add(number)
+                state["accounts"].setdefault(number, {"open_positions": {}, "recent_history_ids": []})
+                account_state = state["accounts"][number]
+
+                try:
+                    login_account(account)
+                    sync_account(account)
+                    handle_open_positions(account, account_state)
+                    handle_closed_positions(account, account_state)
+                except Exception as account_exc:
+                    print(f"Account {number} error: {account_exc}")
+
+            stale = [number for number in state["accounts"].keys() if number not in active_numbers]
+            for number in stale:
+                del state["accounts"][number]
+
             save_state(state)
         except Exception as exc:
             print(f"Loop error: {exc}")
+
         time.sleep(POLL_INTERVAL_SECONDS)
 
 

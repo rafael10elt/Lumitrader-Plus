@@ -46,7 +46,7 @@ export async function saveTradingSettings(formData: FormData) {
   const horarioFim = textValue(formData, "horario_fim") || "17:00";
   const metaLucro = numberValue(formData, "meta_lucro_diaria") ?? 0;
   const perdaMaxima = numberValue(formData, "perda_maxima_diaria") ?? 0;
-  const sistemaLigado = textValue(formData, "sistema_ligado") === "on";
+  const sistemaLigado = textValue(formData, "current_system_state") === "true";
   const breakevenAtivo = textValue(formData, "breakeven_ativo") === "on";
   const trailingAtivo = textValue(formData, "trailing_stop_ativo") === "on";
   const limiteOperacoesAtivo = textValue(formData, "limite_operacoes_ativo") === "on";
