@@ -38,7 +38,7 @@ function resolveTradingViewSymbol(symbol: string) {
   return `OANDA:${normalized}`;
 }
 
-export function TradingViewChart({ symbol, timeframe }: { symbol: string; timeframe: string }) {
+export function TradingViewChart({ initialSymbol = "XAUUSD", initialTimeframe = "M5" }: { initialSymbol?: string; initialTimeframe?: string }) {
   const id = useId().replace(/:/g, "");
   const containerId = `tv-chart-${id}`;
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -55,36 +55,39 @@ export function TradingViewChart({ symbol, timeframe }: { symbol: string; timefr
 
       new window.TradingView.widget({
         autosize: true,
-        symbol: resolveTradingViewSymbol(symbol),
-        interval: INTERVAL_MAP[timeframe] ?? "5",
+        symbol: resolveTradingViewSymbol(initialSymbol),
+        interval: INTERVAL_MAP[initialTimeframe] ?? "5",
         timezone: "America/Sao_Paulo",
         theme: "dark",
         style: "1",
         locale: "br",
         enable_publishing: false,
-        hide_top_toolbar: false,
-        hide_legend: false,
-        allow_symbol_change: false,
+        allow_symbol_change: true,
         withdateranges: true,
+        hide_side_toolbar: false,
         details: true,
         hotlist: false,
         calendar: false,
+        save_image: false,
         studies: ["Volume@tv-basicstudies"],
-        support_host: "https://www.tradingview.com",
         container_id: containerId,
       });
     };
 
-    const existingScript = document.querySelector<HTMLScriptElement>('script[data-tradingview-widget="advanced-chart"]');
+    const existingScript = document.querySelector<HTMLScriptElement>('script[data-tradingview-widget="tvjs"]');
     if (existingScript) {
-      renderWidget();
+      if ((window.TradingView as { widget?: unknown } | undefined)?.widget) {
+        renderWidget();
+      } else {
+        existingScript.addEventListener("load", renderWidget, { once: true });
+      }
       return;
     }
 
     const script = document.createElement("script");
-    script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
+    script.src = "https://s3.tradingview.com/tv.js";
     script.async = true;
-    script.dataset.tradingviewWidget = "advanced-chart";
+    script.dataset.tradingviewWidget = "tvjs";
     script.onload = renderWidget;
     document.body.appendChild(script);
 
@@ -93,7 +96,7 @@ export function TradingViewChart({ symbol, timeframe }: { symbol: string; timefr
         container.innerHTML = "";
       }
     };
-  }, [containerId, symbol, timeframe]);
+  }, [containerId, initialSymbol, initialTimeframe]);
 
-  return <div ref={containerRef} className="mt-5 h-[430px] overflow-hidden rounded-[28px] border border-white/8 bg-slate-950/60" />;
+  return <div ref={containerRef} className="mt-5 h-[520px] overflow-hidden rounded-[28px] border border-white/8 bg-slate-950/60" />;
 }

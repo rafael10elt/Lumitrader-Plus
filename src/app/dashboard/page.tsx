@@ -96,6 +96,19 @@ export type DashboardHistoryFilters = {
   result: string;
 };
 
+export type DashboardOpenOperation = {
+  id: string;
+  direction: "buy" | "sell";
+  lot: number;
+  entryPrice: number;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  openedAt: string;
+  timeframe: string;
+  symbol: string;
+  profitLoss: number;
+};
+
 export type DashboardInsightBundle = {
   summary: string | null;
   notes: string[];
@@ -190,9 +203,19 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     .limit(1)
     .maybeSingle<DashboardStats>();
 
+  const openOperationQuery = supabase
+    .from("operacoes")
+    .select("id, direcao, lote, preco_entrada, stop_loss, take_profit, lucro_prejuizo, aberta_em, timeframe, ativo")
+    .eq("user_id", profile.id)
+    .eq("conta_trading_id", selectedAccount.id)
+    .eq("status", "aberta")
+    .order("aberta_em", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   let operationsQuery = supabase
     .from("operacoes")
-    .select("id, direcao, lote, preco_entrada, lucro_prejuizo, aberta_em, fechada_em, timeframe, validacao_ia")
+    .select("id, direcao, status, lote, preco_entrada, preco_saida, stop_loss, take_profit, lucro_prejuizo, aberta_em, fechada_em, timeframe, ativo, validacao_ia")
     .eq("user_id", profile.id)
     .eq("conta_trading_id", selectedAccount.id)
     .order("aberta_em", { ascending: false })
@@ -217,7 +240,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     operationsQuery = operationsQuery.lt("lucro_prejuizo", 0);
   }
 
-  const [{ data: config }, { data: stats }, { data: operations }] = await Promise.all([configQuery, statsQuery, operationsQuery]);
+  const [{ data: config }, { data: stats }, { data: operations }, { data: openOperation }] = await Promise.all([configQuery, statsQuery, operationsQuery, openOperationQuery]);
 
   const resolvedConfig: DashboardConfig = config ?? {
     conta_trading_id: selectedAccount.id,
@@ -256,6 +279,19 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     notes: accountNotes.length > 0 ? accountNotes : (Array.isArray(latestOperationWithAi?.validacao_ia?.market?.notes) ? latestOperationWithAi.validacao_ia.market.notes : []),
     candles: accountCandles.length > 0 ? accountCandles : (Array.isArray(latestOperationWithAi?.validacao_ia?.market?.candles) ? latestOperationWithAi.validacao_ia.market.candles : []),
   };
+
+  const resolvedOpenOperation: DashboardOpenOperation | null = openOperation ? {
+    id: openOperation.id,
+    direction: openOperation.direcao === "compra" ? "buy" : "sell",
+    lot: Number(openOperation.lote),
+    entryPrice: Number(openOperation.preco_entrada),
+    stopLoss: openOperation.stop_loss != null ? Number(openOperation.stop_loss) : null,
+    takeProfit: openOperation.take_profit != null ? Number(openOperation.take_profit) : null,
+    openedAt: openOperation.aberta_em,
+    timeframe: openOperation.timeframe,
+    symbol: openOperation.ativo,
+    profitLoss: Number(openOperation.lucro_prejuizo ?? 0),
+  } : null;
 
   const resolvedHistory: DashboardHistoryRow[] = operations?.length
     ? operations.map((operation) => {
@@ -314,6 +350,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
             history={resolvedHistory}
             historyFilters={historyFilters}
             insightBundle={insightBundle}
+            openOperation={resolvedOpenOperation}
           />
         </section>
       </div>

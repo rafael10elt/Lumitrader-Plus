@@ -12,6 +12,7 @@ import type {
   DashboardHistoryRow,
   DashboardInsightBundle,
   DashboardLicense,
+  DashboardOpenOperation,
   DashboardStats,
 } from "@/app/dashboard/page";
 
@@ -30,6 +31,7 @@ type DashboardRealtimeProps = {
   history: DashboardHistoryRow[];
   historyFilters: DashboardHistoryFilters;
   insightBundle: DashboardInsightBundle;
+  openOperation: DashboardOpenOperation | null;
 };
 
 function formatAccountCurrency(value: number, account: DashboardAccount) {
@@ -74,6 +76,7 @@ export function DashboardRealtime({
   history,
   historyFilters,
   insightBundle,
+  openOperation,
 }: DashboardRealtimeProps) {
   const supabase = createClient();
   const [, startTransition] = useTransition();
@@ -83,6 +86,7 @@ export function DashboardRealtime({
   const [liveHistory, setLiveHistory] = useState(history);
   const [liveNow, setLiveNow] = useState(() => new Date());
   const [liveInsightBundle, setLiveInsightBundle] = useState(insightBundle);
+  const [liveOpenOperation, setLiveOpenOperation] = useState(openOperation);
 
   const metrics = [
     { label: "Lucro do Dia", value: formatAccountCurrency(Math.max(liveStats.lucro_total, 0), liveAccount), tone: "text-lime-400" },
@@ -114,7 +118,7 @@ export function DashboardRealtime({
         .maybeSingle<DashboardStats>(),
       supabase
         .from("operacoes")
-        .select("id, direcao, lote, preco_entrada, lucro_prejuizo, aberta_em, fechada_em, validacao_ia")
+        .select("id, direcao, status, lote, preco_entrada, preco_saida, stop_loss, take_profit, lucro_prejuizo, aberta_em, fechada_em, timeframe, ativo, validacao_ia")
         .eq("conta_trading_id", selectedAccountId)
         .order("aberta_em", { ascending: false })
         .limit(50),
@@ -138,8 +142,25 @@ export function DashboardRealtime({
         setLiveStats(nextStats);
       }
       if (nextOperations) {
-        const nextRows = nextOperations.map((operation) => {
+        const nextOpenOperation = nextOperations.find((operation) => operation.status === "aberta");
+        setLiveOpenOperation(nextOpenOperation ? {
+          id: nextOpenOperation.id,
+          direction: nextOpenOperation.direcao === "compra" ? "buy" : "sell",
+          lot: Number(nextOpenOperation.lote),
+          entryPrice: Number(nextOpenOperation.preco_entrada),
+          stopLoss: nextOpenOperation.stop_loss != null ? Number(nextOpenOperation.stop_loss) : null,
+          takeProfit: nextOpenOperation.take_profit != null ? Number(nextOpenOperation.take_profit) : null,
+          openedAt: nextOpenOperation.aberta_em,
+          timeframe: nextOpenOperation.timeframe,
+          symbol: nextOpenOperation.ativo,
+          profitLoss: Number(nextOpenOperation.lucro_prejuizo ?? 0),
+        } : null);
+        const nextRows: Array<DashboardHistoryRow | null> = nextOperations.map((operation) => {
           const resultValue = Number(operation.lucro_prejuizo ?? 0);
+          if (operation.status === "aberta") {
+            return null;
+          }
+
           return {
             id: operation.id,
             time: new Intl.DateTimeFormat("pt-BR", {
@@ -154,7 +175,7 @@ export function DashboardRealtime({
             resultTone: resultValue >= 0 ? "text-lime-400" : "text-red-400",
           };
         });
-        setLiveHistory(nextRows);
+        setLiveHistory(nextRows.filter((row): row is DashboardHistoryRow => row !== null));
 
         const latestTelemetry = nextOperations.find((operation) => operation.validacao_ia);
         if (latestTelemetry?.validacao_ia) {
@@ -374,7 +395,33 @@ export function DashboardRealtime({
               <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs uppercase tracking-[0.25em] text-cyan-200">{liveConfig.timeframe}</span>
             </div>
 
-            <TradingViewChart symbol={liveConfig.ativo} timeframe={liveConfig.timeframe} />
+            <TradingViewChart initialSymbol="XAUUSD" initialTimeframe="M5" />
+          </div>
+
+
+          <div className="glass-panel rounded-[28px] p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-mono text-xs uppercase tracking-[0.3em] text-cyan-200/70">Operacao Atual</p>
+                <h2 className="mt-1 text-2xl font-semibold">{liveOpenOperation ? `${liveOpenOperation.direction === "buy" ? "Compra" : "Venda"} ${liveOpenOperation.symbol}` : "Nenhuma operacao aberta"}</h2>
+              </div>
+              {liveOpenOperation ? <span className={`rounded-full px-3 py-1 text-sm font-semibold ${floatingProfit >= 0 ? "bg-lime-400/12 text-lime-300" : "bg-red-400/12 text-red-300"}`}>{floatingProfit >= 0 ? "No lucro" : "No prejuizo"}</span> : null}
+            </div>
+
+            {liveOpenOperation ? (
+              <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <StatRow label="Direcao" value={liveOpenOperation.direction === "buy" ? "Compra" : "Venda"} />
+                <StatRow label="Lote" value={liveOpenOperation.lot.toFixed(2)} />
+                <StatRow label="Entrada" value={formatAccountCurrency(liveOpenOperation.entryPrice, liveAccount)} />
+                <StatRow label="Timeframe" value={liveOpenOperation.timeframe} />
+                <StatRow label="P/L em tempo real" value={`${floatingProfit >= 0 ? "+" : "-"}${formatAccountCurrency(Math.abs(floatingProfit), liveAccount)}`} valueTone={floatingProfit >= 0 ? "text-lime-400" : "text-red-400"} />
+                <StatRow label="PnL" value={`${liveAccount.saldo_atual ? ((floatingProfit / Math.max(liveAccount.saldo_atual, 1)) * 100).toFixed(2) : "0.00"}%`} valueTone={floatingProfit >= 0 ? "text-lime-400" : "text-red-400"} />
+                <StatRow label="Stop Loss" value={liveOpenOperation.stopLoss != null ? formatAccountCurrency(liveOpenOperation.stopLoss, liveAccount) : "--"} />
+                <StatRow label="Take Profit" value={liveOpenOperation.takeProfit != null ? formatAccountCurrency(liveOpenOperation.takeProfit, liveAccount) : "--"} />
+              </div>
+            ) : (
+              <div className="mt-5 rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-400">Assim que houver uma posicao aberta nesta conta, o painel mostra direcao, lote, entrada, P/L e PnL em tempo real.</div>
+            )}
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-2">
