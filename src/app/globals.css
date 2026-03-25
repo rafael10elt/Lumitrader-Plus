@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+:root {
+  --background: #06111e;
+  --background-soft: #0b1a2b;
+  --panel: rgba(8, 18, 33, 0.72);
+  --panel-strong: rgba(12, 25, 45, 0.94);
+  --border: rgba(167, 191, 255, 0.16);
+  --foreground: #f4f7fb;
+  --muted: #95a9c8;
+  --accent: #9de833;
+  --accent-strong: #4db20c;
+  --danger: #ff5f5f;
+  --warning: #f6c453;
+  --info: #38bdf8;
+  --font-sora: "Segoe UI", "Trebuchet MS", system-ui, sans-serif;
+  --font-space-grotesk: "Arial Narrow", "Aptos", "Segoe UI", sans-serif;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sora);
+  --font-mono: var(--font-space-grotesk);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background:
+    radial-gradient(circle at top left, rgba(56, 189, 248, 0.16), transparent 22%),
+    radial-gradient(circle at top right, rgba(157, 232, 51, 0.12), transparent 24%),
+    linear-gradient(180deg, #09101b 0%, #06111e 45%, #040b14 100%);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sora), sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: rgba(157, 232, 51, 0.24);
+}
+
+.grid-sheen {
+  background-image:
+    linear-gradient(rgba(167, 191, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(167, 191, 255, 0.06) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.glass-panel {
+  background: linear-gradient(180deg, rgba(14, 28, 47, 0.95), rgba(8, 18, 33, 0.86));
+  border: 1px solid var(--border);
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.glow-ring {
+  box-shadow:
+    0 0 0 1px rgba(157, 232, 51, 0.2),
+    0 0 30px rgba(157, 232, 51, 0.12);
+}
