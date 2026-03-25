@@ -24,7 +24,7 @@ export async function GET(request: Request) {
     .select(`
       id,
       numero_conta,
-      mt5_server,
+      servidor,
       mt5_password,
       ativo,
       usuarios!inner(id, acesso_ativo),
@@ -41,11 +41,11 @@ export async function GET(request: Request) {
   }
 
   const accounts = (data ?? [])
-    .filter((item) => item.mt5_server && item.mt5_password)
+    .filter((item) => item.servidor && item.mt5_password)
     .map((item) => ({
       id: item.id,
       number: item.numero_conta,
-      server: item.mt5_server,
+      server: item.servidor,
       password: item.mt5_password,
       config: Array.isArray(item.configuracoes_sessao) ? item.configuracoes_sessao[0] : item.configuracoes_sessao,
     }));

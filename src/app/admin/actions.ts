@@ -131,7 +131,7 @@ export async function saveLicense(formData: FormData) {
   const licenseId = textValue(formData, "license_id");
   const userId = textValue(formData, "user_id");
   const numeroConta = textValue(formData, "numero_conta");
-  const mt5Server = textValue(formData, "mt5_server");
+  const servidor = textValue(formData, "servidor");
   const mt5Password = textValue(formData, "mt5_password");
   const valorInput = textValue(formData, "valor");
   const dataExpiracao = normalizeDateValue(textValue(formData, "data_expiracao"));
@@ -162,7 +162,7 @@ export async function saveLicense(formData: FormData) {
 
   const accountPayload = {
     numero_conta: numeroConta,
-    mt5_server: mt5Server || null,
+    servidor: servidor || null,
     alavancagem,
   } as const;
 

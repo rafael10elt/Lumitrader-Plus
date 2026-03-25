@@ -47,7 +47,7 @@ type ManagedAccount = {
   user_id: string;
   nome_cliente: string;
   numero_conta: string;
-  mt5_server: string | null;
+  servidor: string | null;
   mt5_password: string | null;
   alavancagem: number | null;
 };
@@ -72,7 +72,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
   const [{ data: users }, { data: licenses }, { data: accounts }] = await Promise.all([
     supabase.from("usuarios").select("id, nome, email, telegram_id, role, acesso_ativo").order("criado_em", { ascending: false }),
     supabase.from("licencas").select("id, user_id, nome_plano, status, valor, data_expiracao, conta_trading_id").order("data_expiracao", { ascending: true }),
-    supabase.from("contas_trading").select("id, user_id, nome_cliente, numero_conta, mt5_server, mt5_password, alavancagem").order("criado_em", { ascending: false }),
+    supabase.from("contas_trading").select("id, user_id, nome_cliente, numero_conta, servidor, mt5_password, alavancagem").order("criado_em", { ascending: false }),
   ]);
 
   const expiredIds = (licenses ?? [])
@@ -97,7 +97,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
   const filteredLicenses = managedLicenses.filter((license) => {
     const account = managedAccounts.find((item) => item.id === license.conta_trading_id);
     const user = managedUsers.find((item) => item.id === license.user_id);
-    const matchesQuery = !query || [user?.nome ?? "", user?.email ?? "", account?.numero_conta ?? "", account?.mt5_server ?? ""].some((value) => value.toLowerCase().includes(query));
+    const matchesQuery = !query || [user?.nome ?? "", user?.email ?? "", account?.numero_conta ?? "", account?.servidor ?? ""].some((value) => value.toLowerCase().includes(query));
     const matchesPlan = planFilter === "all" || license.nome_plano === planFilter;
     const matchesStatus = statusFilter === "all" || license.status === statusFilter;
     return matchesQuery && matchesPlan && matchesStatus;

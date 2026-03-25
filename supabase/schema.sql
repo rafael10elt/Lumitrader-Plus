@@ -37,7 +37,6 @@ create table if not exists public.contas_trading (
   ativo boolean not null default false,
   atualizado_em timestamptz not null default timezone('utc', now()),
   criado_em timestamptz not null default timezone('utc', now()),
-  mt5_server text,
   mt5_password text,
   server_time timestamptz,
   mercado_snapshot jsonb,

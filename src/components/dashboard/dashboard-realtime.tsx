@@ -4,7 +4,7 @@ import { useEffect, useEffectEvent, useState, useTransition } from "react";
 import type { AppUser } from "@/lib/auth";
 import { saveTradingSettings, toggleSystemState } from "@/app/dashboard/actions";
 import { createClient } from "@/lib/supabase/client";
-import type { MarketCandle } from "@/lib/backend/types";
+import { TradingViewChart } from "@/components/dashboard/tradingview-chart";
 import type {
   DashboardAccount,
   DashboardConfig,
@@ -201,21 +201,26 @@ export function DashboardRealtime({
   const floatingProfit = (liveAccount.equity ?? 0) - (liveAccount.saldo_atual ?? 0);
   const isSystemOnline = liveConfig.sistema_ligado && Boolean(liveAccount.ativo);
   const brasiliaClockLabel = new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
     hour12: false,
     timeZone: "America/Sao_Paulo",
   }).format(liveNow);
-  const serverClockLabel = liveAccount.server_time
-    ? new Intl.DateTimeFormat("pt-BR", {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-        timeZone: "UTC",
-      }).format(new Date(liveAccount.server_time))
-    : "--:--:--";
+  const serverClock = new Date(liveNow.getTime() + 6 * 60 * 60 * 1000);
+  const serverClockLabel = new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZone: "America/Sao_Paulo",
+  }).format(serverClock);
 
   return (
     <div className="mt-5 grid gap-6">
@@ -369,7 +374,7 @@ export function DashboardRealtime({
               <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs uppercase tracking-[0.25em] text-cyan-200">{liveConfig.timeframe}</span>
             </div>
 
-            <CandlestickChart candles={liveInsightBundle.candles} currencySymbol={liveAccount.moeda_simbolo} />
+            <TradingViewChart symbol={liveConfig.ativo} timeframe={liveConfig.timeframe} />
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-2">
@@ -496,38 +501,3 @@ function CheckBox({ label, name, defaultChecked }: { label: string; name: string
   return <label className="flex items-center gap-3 text-sm text-slate-200"><input type="checkbox" name={name} defaultChecked={defaultChecked} className="h-4 w-4 rounded border-white/20 bg-slate-950/60" />{label}</label>;
 }
 
-function CandlestickChart({ candles, currencySymbol }: { candles: MarketCandle[]; currencySymbol: string }) {
-  if (!candles.length) {
-    return (
-      <div className="grid-sheen relative mt-5 flex h-[320px] items-center justify-center overflow-hidden rounded-[28px] border border-white/8 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.12),transparent_28%),linear-gradient(180deg,rgba(5,11,21,0.95),rgba(3,8,16,0.98))] p-4 text-center text-slate-400">
-        Aguardando stream de candles reais enviado pelo backend operacional.
-      </div>
-    );
-  }
-
-  const highs = candles.map((candle) => candle.high);
-  const lows = candles.map((candle) => candle.low);
-  const max = Math.max(...highs);
-  const min = Math.min(...lows);
-  const range = Math.max(max - min, 1);
-  const last = candles[candles.length - 1];
-
-  return (
-    <div className="grid-sheen relative mt-5 h-[320px] overflow-hidden rounded-[28px] border border-white/8 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.12),transparent_28%),linear-gradient(180deg,rgba(5,11,21,0.95),rgba(3,8,16,0.98))] p-4">
-      <div className="absolute inset-x-4 top-6 flex justify-between text-xs text-slate-500"><span>{currencySymbol} {max.toFixed(2)}</span><span>{currencySymbol} {((max + min) / 2).toFixed(2)}</span><span>{currencySymbol} {min.toFixed(2)}</span></div>
-      <div className="absolute inset-x-4 bottom-5 top-12 flex items-end gap-2">
-        {candles.map((candle, index) => {
-          const wickTop = ((max - candle.high) / range) * 100;
-          const wickHeight = ((candle.high - candle.low) / range) * 100;
-          const bodyTop = ((max - Math.max(candle.open, candle.close)) / range) * 100;
-          const bodyHeight = Math.max((Math.abs(candle.open - candle.close) / range) * 100, 1.8);
-          const isBull = candle.close >= candle.open;
-          return <div key={`${candle.open}-${candle.close}-${index}`} className="relative flex h-full flex-1 items-center justify-center"><div className="absolute w-[2px] rounded-full bg-slate-300/60" style={{ top: `${wickTop}%`, height: `${wickHeight}%` }} /><div className={`absolute w-4 rounded-[4px] ${isBull ? "border border-lime-300/90 bg-lime-400/85" : "border border-red-300/90 bg-red-400/85"}`} style={{ top: `${bodyTop}%`, height: `${bodyHeight}%` }} /></div>;
-        })}
-      </div>
-      <div className="absolute inset-x-6 top-24 h-px border-t border-dashed border-lime-400/40" />
-      <div className="absolute right-4 top-4 rounded-2xl border border-white/8 bg-slate-950/70 px-3 py-2 text-right"><p className="text-xs uppercase tracking-[0.25em] text-slate-400">Preco</p><p className="mt-1 text-xl font-bold text-lime-300">{currencySymbol} {last.close.toFixed(2)}</p></div>
-      <div className="absolute bottom-4 left-4 max-w-[260px] rounded-[24px] border border-white/8 bg-slate-950/75 p-4"><p className="text-lg font-semibold">Candle atual</p><p className="mt-3 text-sm text-slate-300">Abertura {currencySymbol} {last.open.toFixed(2)}</p><p className="mt-1 text-sm text-slate-300">Max {currencySymbol} {last.high.toFixed(2)} / Min {currencySymbol} {last.low.toFixed(2)}</p></div>
-    </div>
-  );
-}
