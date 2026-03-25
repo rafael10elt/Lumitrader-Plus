@@ -1,7 +1,7 @@
 ﻿import { createAdminClient } from "@/lib/supabase/admin";
 import type { ReportPayload, TradingEventPayload } from "@/lib/backend/types";
 
-type LoadedContext = {
+export type LoadedContext = {
   user: {
     id: string;
     nome: string | null;
@@ -46,6 +46,68 @@ type LoadedContext = {
     ativo: string;
   } | null;
 };
+
+export async function loadSyncContext(accountNumber: string): Promise<Pick<LoadedContext, "user" | "account" | "license">> {
+  const adminClient = createAdminClient();
+  const { data, error } = await adminClient
+    .from("contas_trading")
+    .select(`
+      id,
+      user_id,
+      nome_cliente,
+      numero_conta,
+      corretora,
+      servidor,
+      moeda_codigo,
+      moeda_simbolo,
+      saldo_atual,
+      equity,
+      margem,
+      margem_livre,
+      nivel_margem,
+      alavancagem,
+      ativo,
+      usuarios!inner(id, nome, email, telegram_id, acesso_ativo),
+      licencas!inner(id, nome_plano, status, valor, data_expiracao)
+    `)
+    .eq("numero_conta", accountNumber)
+    .eq("licencas.status", "ativa")
+    .gte("licencas.data_expiracao", new Date().toISOString().slice(0, 10))
+    .maybeSingle();
+
+  if (error || !data) {
+    throw new Error("Conta MT5 nao encontrada ou sem licenca ativa.");
+  }
+
+  const user = Array.isArray(data.usuarios) ? data.usuarios[0] : data.usuarios;
+  const license = Array.isArray(data.licencas) ? data.licencas[0] : data.licencas;
+
+  if (!user || !license) {
+    throw new Error("Conta MT5 sem usuario/licenca valida.");
+  }
+
+  return {
+    user,
+    license,
+    account: {
+      id: data.id,
+      user_id: data.user_id,
+      nome_cliente: data.nome_cliente,
+      numero_conta: data.numero_conta,
+      corretora: data.corretora,
+      servidor: data.servidor,
+      moeda_codigo: data.moeda_codigo,
+      moeda_simbolo: data.moeda_simbolo,
+      saldo_atual: data.saldo_atual,
+      equity: data.equity,
+      margem: data.margem,
+      margem_livre: data.margem_livre,
+      nivel_margem: data.nivel_margem,
+      alavancagem: data.alavancagem,
+      ativo: data.ativo,
+    },
+  };
+}
 
 export async function loadTradingContext(accountNumber: string): Promise<LoadedContext> {
   const adminClient = createAdminClient();

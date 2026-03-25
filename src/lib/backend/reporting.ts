@@ -2,10 +2,21 @@
 import { sendReportToN8n } from "@/lib/backend/n8n";
 import { generateAiSummary } from "@/lib/backend/openai";
 import { calculateRiskSnapshot } from "@/lib/backend/risk";
-import { attachOperationTelemetry, countOperationsToday, loadTradingContext, recordTradingEvent, refreshDailyStats, updateAccountSnapshot } from "@/lib/backend/supabase";
+import { attachOperationTelemetry, countOperationsToday, loadSyncContext, loadTradingContext, recordTradingEvent, refreshDailyStats, updateAccountSnapshot } from "@/lib/backend/supabase";
 import type { ReportPayload, TradingEventPayload } from "@/lib/backend/types";
 
 export async function processTradingEvent(payload: TradingEventPayload) {
+  if (payload.event === "account_sync") {
+    const syncContext = await loadSyncContext(payload.account.number);
+
+    if (!syncContext.user.acesso_ativo) {
+      throw new Error("Usuario bloqueado pelo SaaS.");
+    }
+
+    await updateAccountSnapshot(syncContext.account.id, payload);
+    return { synced: true, account: payload.account.number, mode: "fast_sync" };
+  }
+
   const context = await loadTradingContext(payload.account.number);
 
   if (!context.user.acesso_ativo) {
@@ -15,11 +26,6 @@ export async function processTradingEvent(payload: TradingEventPayload) {
   const licenseActive = context.license.status === "ativa" && context.license.data_expiracao >= new Date().toISOString().slice(0, 10);
   if (!licenseActive) {
     throw new Error("Licenca inativa, bloqueada ou expirada para esta conta MT5.");
-  }
-
-  if (payload.event === "account_sync") {
-    await updateAccountSnapshot(context.account.id, payload);
-    return { synced: true, account: payload.account.number };
   }
 
   if (!payload.operation) {
