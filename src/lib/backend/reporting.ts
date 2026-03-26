@@ -1,8 +1,9 @@
-﻿import { toCsv, toHtml } from "@/lib/backend/formatters";
+import { toCsv, toHtml } from "@/lib/backend/formatters";
 import { sendReportToN8n } from "@/lib/backend/n8n";
-import { generateAiSummary } from "@/lib/backend/openai";
+import { generateAiSummary, validateTradeOpportunity } from "@/lib/backend/openai";
 import { evaluateAutoOpportunity } from "@/lib/backend/auto-trader";
 import { calculateRiskSnapshot } from "@/lib/backend/risk";
+import { hasOpenAiApiKey } from "@/lib/env";
 import {
   attachOperationTelemetry,
   countOperationsToday,
@@ -15,6 +16,27 @@ import {
   updateAccountSnapshot,
 } from "@/lib/backend/supabase";
 import type { ReportPayload, TradingEventPayload } from "@/lib/backend/types";
+
+const aiValidationCache = new Map<string, { expiresAt: number; approved: boolean; summary: string }>();
+const AI_VALIDATION_TTL_MS = 90_000;
+
+function buildValidationCacheKey(payload: TradingEventPayload, signal: NonNullable<ReturnType<typeof evaluateAutoOpportunity>>) {
+  return JSON.stringify({
+    account: payload.account.number,
+    symbol: payload.market?.notes?.[0] ?? payload.operation?.symbol ?? null,
+    trend: payload.market?.trend ?? null,
+    rsi: payload.market?.rsi != null ? Number(payload.market.rsi.toFixed(1)) : null,
+    ma20: payload.market?.moving_average_20 != null ? Number(payload.market.moving_average_20.toFixed(2)) : null,
+    support: payload.market?.support != null ? Number(payload.market.support.toFixed(2)) : null,
+    resistance: payload.market?.resistance != null ? Number(payload.market.resistance.toFixed(2)) : null,
+    bid: payload.market?.last_bid != null ? Number(payload.market.last_bid.toFixed(2)) : null,
+    ask: payload.market?.last_ask != null ? Number(payload.market.last_ask.toFixed(2)) : null,
+    signalType: signal.type,
+    lot: signal.lot,
+    stopLoss: signal.stopLoss,
+    takeProfit: signal.takeProfit,
+  });
+}
 
 export async function processTradingEvent(payload: TradingEventPayload) {
   const context = await loadTradingContext(payload.account.number);
@@ -45,8 +67,61 @@ export async function processTradingEvent(payload: TradingEventPayload) {
     const signal = evaluateAutoOpportunity(context, payload, operationsToday);
 
     if (signal && !executionState.hasOpenPosition && !executionState.hasPendingCommand) {
+      if (hasOpenAiApiKey()) {
+        const cacheKey = buildValidationCacheKey(payload, signal);
+        const cachedDecision = aiValidationCache.get(cacheKey);
+        const now = Date.now();
+
+        if (cachedDecision && cachedDecision.expiresAt > now) {
+          if (!cachedDecision.approved) {
+            return {
+              synced: true,
+              account: payload.account.number,
+              mode: "fast_sync",
+              autoCommand: null,
+              aiValidation: cachedDecision.summary,
+            };
+          }
+
+          await enqueueAutoTradeCommand(context, payload, {
+            ...signal,
+            rationale: `${signal.rationale} | IA: ${cachedDecision.summary}`,
+          });
+          return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: signal.type, aiValidation: cachedDecision.summary };
+        }
+
+        const aiDecision = await validateTradeOpportunity({
+          context,
+          payload,
+          signal,
+          operationsToday,
+        });
+
+        aiValidationCache.set(cacheKey, {
+          expiresAt: now + AI_VALIDATION_TTL_MS,
+          approved: aiDecision.approved,
+          summary: aiDecision.summary,
+        });
+
+        if (!aiDecision.approved) {
+          return {
+            synced: true,
+            account: payload.account.number,
+            mode: "fast_sync",
+            autoCommand: null,
+            aiValidation: aiDecision.summary,
+          };
+        }
+
+        await enqueueAutoTradeCommand(context, payload, {
+          ...signal,
+          rationale: `${signal.rationale} | IA: ${aiDecision.summary}`,
+        });
+        return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: signal.type, aiValidation: aiDecision.summary };
+      }
+
       await enqueueAutoTradeCommand(context, payload, signal);
-      return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: signal.type };
+      return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: signal.type, aiValidation: "OpenAI indisponivel; usando validacao matematica." };
     }
 
     return { synced: true, account: payload.account.number, mode: "fast_sync" };
@@ -126,8 +201,3 @@ export async function processTradingEvent(payload: TradingEventPayload) {
 
   return report;
 }
-
-
-
-
-

@@ -1,4 +1,4 @@
-﻿const requiredPublicEnvVars = {
+const requiredPublicEnvVars = {
   NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
 } as const;
@@ -38,6 +38,10 @@ function getRequiredServerEnv(name: string) {
 
 export function getServiceRoleKey() {
   return getRequiredServerEnv("SUPABASE_SERVICE_ROLE_KEY");
+}
+
+export function hasOpenAiApiKey() {
+  return Boolean(process.env.OPENAI_API_KEY);
 }
 
 export function getOpenAiApiKey() {
