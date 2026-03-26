@@ -123,6 +123,10 @@ export type DashboardCommandStatus = {
   erro: string | null;
   solicitado_em: string;
   processado_em: string | null;
+  payload?: {
+    action?: string;
+    closeFraction?: number;
+  } | null;
 };
 
 function normalizeLicenseStatus(license: DashboardLicense) {
@@ -225,7 +229,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
   const commandStatusQuery = supabase
     .from("comandos_trading")
-    .select("id, tipo, status, erro, solicitado_em, processado_em")
+    .select("id, tipo, status, erro, solicitado_em, processado_em, payload")
     .eq("user_id", profile.id)
     .eq("conta_trading_id", selectedAccount.id)
     .order("solicitado_em", { ascending: false })
@@ -332,29 +336,29 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     : [];
 
   return (
-    <main className="min-h-screen overflow-x-hidden px-4 py-6 text-white sm:px-6 lg:px-8">
-      <div className="mx-auto flex w-full max-w-none flex-col gap-6 2xl:px-4">
-        <section className="glass-panel rounded-[32px] p-4 sm:p-6">
-          <div className="flex flex-col gap-4 border-b border-white/8 pb-5 lg:flex-row lg:items-center lg:justify-between">
+    <main className="min-h-screen overflow-x-hidden px-2 py-3 text-white sm:px-3 lg:px-4">
+      <div className="mx-auto flex w-full max-w-none flex-col gap-3">
+        <section className="glass-panel rounded-[28px] p-3 sm:p-4">
+          <div className="flex flex-col gap-3 border-b border-white/8 pb-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-wrap items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-lime-400/12 text-2xl text-lime-300 glow-ring">L</div>
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-lime-400/12 text-2xl text-lime-300 glow-ring">L</div>
               <div>
                 <p className="font-mono text-xs uppercase tracking-[0.32em] text-cyan-200/70">Plataforma SaaS de Trading</p>
-                <h1 className="font-mono text-2xl font-bold tracking-tight sm:text-3xl">Lumitrader</h1>
+                <h1 className="font-mono text-[1.75rem] font-bold tracking-tight sm:text-[2rem]">Lumitrader</h1>
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              <div className="rounded-[24px] border border-white/8 bg-white/4 px-4 py-3">
+              <div className="rounded-[20px] border border-white/8 bg-white/4 px-3 py-2.5">
                 <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Usuario</p>
-                <p className="mt-2 text-lg font-semibold">{profile.nome ?? profile.email ?? "Trader"}</p>
+                <p className="mt-1.5 text-base font-semibold">{profile.nome ?? profile.email ?? "Trader"}</p>
               </div>
               {profile.role === "admin" ? (
-                <Link href="/admin" className="rounded-[22px] border border-cyan-400/20 bg-cyan-400/10 px-4 py-3 text-sm font-semibold text-cyan-100">
+                <Link href="/admin" className="rounded-[20px] border border-cyan-400/20 bg-cyan-400/10 px-4 py-2.5 text-sm font-semibold text-cyan-100">
                   Gestao SaaS
                 </Link>
               ) : null}
-              <SignoutButton action={signout} className="rounded-[22px] border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-200 transition-colors hover:bg-white/10" />
+              <SignoutButton action={signout} className="rounded-[20px] border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-200 transition-colors hover:bg-white/10" />
             </div>
           </div>
 
@@ -397,3 +401,4 @@ function BlockedState({ title, description, canManage }: { title: string; descri
     </main>
   );
 }
+

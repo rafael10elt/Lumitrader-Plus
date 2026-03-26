@@ -251,6 +251,41 @@ export async function recordTradingEvent(context: LoadedContext, payload: Tradin
       ? latestOpen.validacao_ia
       : {};
 
+    if (payload.event === "operation_partially_closed") {
+      const partialCloses = Array.isArray(currentTelemetry.partial_closes)
+        ? currentTelemetry.partial_closes
+        : [];
+
+      await adminClient
+        .from("operacoes")
+        .update({
+          lote: payload.operation.lot,
+          stop_loss: payload.operation.stop_loss ?? null,
+          take_profit: payload.operation.take_profit ?? null,
+          lucro_prejuizo: payload.operation.profit_loss ?? 0,
+          spread: payload.operation.spread ?? null,
+          volume: payload.operation.volume ?? null,
+          volatilidade: payload.operation.volatility ?? null,
+          validacao_ia: {
+            ...currentTelemetry,
+            ticket: payload.operation.ticket ?? currentTelemetry.ticket ?? null,
+            market: payload.market ?? currentTelemetry.market ?? null,
+            partial_closes: [
+              ...partialCloses.slice(-9),
+              {
+                closed_at: payload.operation.closed_at ?? new Date().toISOString(),
+                exit_price: payload.operation.exit_price ?? null,
+                close_reason: payload.operation.close_reason ?? "partial_close",
+                remaining_lot: payload.operation.lot,
+              },
+            ],
+          },
+        })
+        .eq("id", latestOpen.id);
+
+      return latestOpen.id;
+    }
+
     await adminClient
       .from("operacoes")
       .update({
@@ -272,6 +307,7 @@ export async function recordTradingEvent(context: LoadedContext, payload: Tradin
 
     return latestOpen.id;
   }
+
   const { data: inserted } = await adminClient
     .from("operacoes")
     .insert({
@@ -280,10 +316,10 @@ export async function recordTradingEvent(context: LoadedContext, payload: Tradin
       ativo: payload.operation.symbol,
       timeframe: payload.operation.timeframe,
       direcao: payload.operation.side === "buy" ? "compra" : "venda",
-      status: "fechada",
+      status: payload.event === "operation_partially_closed" ? "aberta" : "fechada",
       lote: payload.operation.lot,
       preco_entrada: payload.operation.entry_price,
-      preco_saida: payload.operation.exit_price ?? null,
+      preco_saida: payload.event === "operation_partially_closed" ? null : (payload.operation.exit_price ?? null),
       stop_loss: payload.operation.stop_loss ?? null,
       take_profit: payload.operation.take_profit ?? null,
       lucro_prejuizo: payload.operation.profit_loss ?? 0,
@@ -296,14 +332,14 @@ export async function recordTradingEvent(context: LoadedContext, payload: Tradin
         ticket: payload.operation.ticket ?? null,
         market: payload.market ?? null,
       },
-      motivo_fechamento: payload.operation.close_reason ?? null,
+      motivo_fechamento: payload.event === "operation_partially_closed" ? null : (payload.operation.close_reason ?? null),
       aberta_em: payload.operation.opened_at,
-      fechada_em: payload.operation.closed_at ?? new Date().toISOString(),
+      fechada_em: payload.event === "operation_partially_closed" ? null : (payload.operation.closed_at ?? new Date().toISOString()),
     })
     .select("id")
     .single<{ id: string }>();
 
-    return inserted?.id ?? null;
+  return inserted?.id ?? null;
 }
 
 export async function attachOperationTelemetry(operationId: string | null, payload: TradingEventPayload, report: Omit<ReportPayload, "formats">) {
@@ -312,19 +348,29 @@ export async function attachOperationTelemetry(operationId: string | null, paylo
   }
 
   const adminClient = createAdminClient();
+  const { data: existing } = await adminClient
+    .from("operacoes")
+    .select("validacao_ia")
+    .eq("id", operationId)
+    .maybeSingle<{ validacao_ia?: Record<string, unknown> | null }>();
+
+  const currentTelemetry = existing?.validacao_ia && typeof existing.validacao_ia === "object"
+    ? existing.validacao_ia
+    : {};
+
   await adminClient
     .from("operacoes")
     .update({
       validacao_ia: {
-        ticket: payload.operation.ticket ?? null,
-        market: payload.market ?? null,
+        ...currentTelemetry,
+        ticket: payload.operation.ticket ?? currentTelemetry.ticket ?? null,
+        market: payload.market ?? currentTelemetry.market ?? null,
         ai: report.ai,
         report_generated_at: report.generatedAt,
       },
     })
     .eq("id", operationId);
 }
-
 export async function countOperationsToday(accountId: string) {
   const adminClient = createAdminClient();
   const start = new Date();
@@ -441,6 +487,7 @@ export async function enqueueAutoTradeCommand(
     throw new Error(error.message);
   }
 }
+
 
 
 

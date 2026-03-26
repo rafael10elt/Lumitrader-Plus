@@ -12,6 +12,9 @@ from dotenv import dotenv_values
 
 ENV_PATH = Path(__file__).with_name(".env")
 
+TERMINAL_PATH = r"C:\Users\Administrator\Desktop\MT5 Conta 4\EC Markets MT5 Terminal\terminal64.exe"
+ACCOUNT_NUMBER = "554679"
+
 
 def load_env_file() -> None:
     values = dotenv_values(ENV_PATH, encoding="utf-8-sig")
@@ -113,8 +116,6 @@ def fetch_active_accounts() -> List[Dict[str, Any]]:
     return data.get("accounts", [])
 
 
-
-
 def fetch_pending_commands(account_number: str) -> List[Dict[str, Any]]:
     response = requests.get(
         BRIDGE_COMMANDS_URL,
@@ -195,9 +196,15 @@ def execute_command(command: Dict[str, Any]) -> None:
         payload = command.get("payload") or {}
         close_fraction = payload.get("closeFraction")
         requested_volume = float(position.volume)
-        is_partial_close = command_type == "partial_close_position" or (isinstance(close_fraction, (int, float)) and 0 < float(close_fraction) < 1)
+        is_partial_close = command_type == "partial_close_position" or (
+            isinstance(close_fraction, (int, float)) and 0 < float(close_fraction) < 1
+        )
         if is_partial_close:
-            requested_volume = normalize_volume(symbol, float(position.volume) * float(close_fraction), float(position.volume))
+            requested_volume = normalize_volume(
+                symbol,
+                float(position.volume) * float(close_fraction),
+                float(position.volume),
+            )
 
         close_type = mt5.ORDER_TYPE_SELL if position.type == mt5.POSITION_TYPE_BUY else mt5.ORDER_TYPE_BUY
         price = tick.bid if position.type == mt5.POSITION_TYPE_BUY else tick.ask
@@ -238,18 +245,27 @@ def process_commands(account_number: str) -> None:
         except Exception as exc:
             acknowledge_command(command["id"], "failed", error=str(exc))
 
+
 def ensure_terminal() -> None:
-    if not mt5.initialize():
+    if not mt5.initialize(path=TERMINAL_PATH):
         raise RuntimeError(f"MT5 initialize failed: {mt5.last_error()}")
+
 
 
 def login_account(account: Dict[str, Any]) -> None:
     ensure_terminal()
-    login = int(account["number"])
-    password = account["password"]
-    server = account["server"]
-    if not mt5.login(login=login, password=password, server=server):
-        raise RuntimeError(f"MT5 login failed for {login}: {mt5.last_error()}")
+
+    expected_login = int(account["number"])
+    current_account = mt5.account_info()
+    if current_account is None:
+        raise RuntimeError("MT5 account_info returned None after initialize")
+
+    current_login = int(current_account.login)
+    if current_login != expected_login:
+        raise RuntimeError(
+            f"MT5 aberto na conta errada. Atual={current_login}, Esperado={expected_login}"
+        )
+
 
 
 def account_payload(symbol: str | None = None) -> Dict[str, Any]:
@@ -295,7 +311,6 @@ def build_position_snapshot(position) -> PositionSnapshot:
         opened_at=utc_iso(position.time),
     )
 
-
 def calculate_rsi(closes: List[float], period: int = 14) -> float | None:
     if len(closes) <= period:
         return None
@@ -312,7 +327,6 @@ def calculate_rsi(closes: List[float], period: int = 14) -> float | None:
 
     rs = average_gain / average_loss
     return 100.0 - (100.0 / (1.0 + rs))
-
 
 
 def build_market_payload(symbol: str, timeframe_name: str) -> Dict[str, Any]:
@@ -355,6 +369,7 @@ def build_market_payload(symbol: str, timeframe_name: str) -> Dict[str, Any]:
     tick = mt5.symbol_info_tick(symbol)
     symbol_info = mt5.symbol_info(symbol)
     notes = [f"Sync do mercado para {symbol} em {timeframe_name}."]
+
     if trend:
         notes.append(f"Tendencia detectada: {trend}.")
     if rsi is not None:
@@ -376,7 +391,6 @@ def build_market_payload(symbol: str, timeframe_name: str) -> Dict[str, Any]:
     }
 
 
-
 def send_event(payload: Dict[str, Any]) -> None:
     response = requests.post(
         EVENTS_URL,
@@ -390,7 +404,8 @@ def send_event(payload: Dict[str, Any]) -> None:
     response.raise_for_status()
     operation = payload.get("operation") or {}
     symbol = operation.get("symbol", "sync")
-    print(f"Event sent: {payload['event']} -> {symbol} -> {response.status_code}")
+    print(f"Event sent: {payload['event']} -> {symbol} -> {response.status_code}", flush=True)
+
 
 
 def sync_account(account_config: Dict[str, Any]) -> Dict[str, Any]:
@@ -458,15 +473,16 @@ def handle_open_positions(account_config: Dict[str, Any], account_state: Dict[st
 
     account_state["open_positions"] = {ticket: snapshot.__dict__ for ticket, snapshot in current_map.items()}
 
-
 def handle_closed_positions(account_config: Dict[str, Any], account_state: Dict[str, Any]) -> None:
     config = account_config.get("config") or {}
     symbol = config.get("ativo") or "XAUUSD"
     timeframe = config.get("timeframe") or "M5"
     start_of_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
     history = mt5.history_deals_get(start_of_day, datetime.now(timezone.utc))
     if history is None:
         history = []
+
     account = account_payload(symbol)
     market = build_market_payload(symbol, timeframe)
     recent_history_ids = set(account_state.get("recent_history_ids", []))
@@ -478,11 +494,9 @@ def handle_closed_positions(account_config: Dict[str, Any], account_state: Dict[
         history_id = str(deal.ticket)
         if history_id in recent_history_ids:
             continue
-
         position_id = str(deal.position_id)
         cached_position = open_positions.get(position_id)
         is_partial_close = cached_position is not None
-
         payload = {
             "event": "operation_partially_closed" if is_partial_close else "operation_closed",
             "account": account,
@@ -527,12 +541,16 @@ def main() -> None:
 
     state = load_state()
     state.setdefault("accounts", {})
-    print("Lumitrader MT5 reporter started")
+    print("Lumitrader MT5 reporter started", flush=True)
+
 
     while True:
         try:
             accounts = fetch_active_accounts()
+            accounts = [account for account in accounts if str(account["number"]) == ACCOUNT_NUMBER]
             active_numbers = set()
+
+
             for account in accounts:
                 number = str(account["number"])
                 active_numbers.add(number)
@@ -546,7 +564,8 @@ def main() -> None:
                     handle_open_positions(account, account_state)
                     handle_closed_positions(account, account_state)
                 except Exception as account_exc:
-                    print(f"Account {number} error: {account_exc}")
+                    print(f"Account {number} error: {account_exc}", flush=True)
+
 
             stale = [number for number in state["accounts"].keys() if number not in active_numbers]
             for number in stale:
@@ -554,21 +573,12 @@ def main() -> None:
 
             save_state(state)
         except Exception as exc:
-            print(f"Loop error: {exc}")
+            print(f"Loop error: {exc}", flush=True)
+
 
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
 

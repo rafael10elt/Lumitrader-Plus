@@ -51,7 +51,9 @@ export async function processTradingEvent(payload: TradingEventPayload) {
 
   const operationPayload = payload.operation;
   const operationId = await recordTradingEvent(context, payload);
-  await refreshDailyStats(context, payload);
+  if (payload.event === "operation_closed") {
+    await refreshDailyStats(context, payload);
+  }
   const operationsToday = await countOperationsToday(context.account.id);
 
   const risk = calculateRiskSnapshot({
@@ -117,3 +119,7 @@ export async function processTradingEvent(payload: TradingEventPayload) {
 
   return report;
 }
+
+
+
+

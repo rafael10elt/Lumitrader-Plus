@@ -7,7 +7,7 @@ export type MarketCandle = {
 };
 
 export type TradingEventPayload = {
-  event: "account_sync" | "operation_opened" | "operation_closed";
+  event: "account_sync" | "operation_opened" | "operation_closed" | "operation_partially_closed";
   account: {
     number: string;
     broker?: string;
@@ -111,3 +111,4 @@ export type ReportPayload = {
     html: string;
   };
 };
+

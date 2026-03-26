@@ -111,5 +111,6 @@ export function TradingViewChart({ initialSymbol = "XAUUSD", initialTimeframe = 
     };
   }, [containerId, initialSymbol, initialTimeframe, isCompact]);
 
-  return <div ref={containerRef} className="mt-5 h-[360px] min-w-0 overflow-hidden rounded-[28px] border border-white/8 bg-slate-950/60 sm:h-[420px] xl:h-[520px]" />;
+  return <div ref={containerRef} className="mt-3 h-[390px] min-w-0 flex-1 overflow-hidden rounded-[28px] border border-white/8 bg-slate-950/60 sm:h-[470px] xl:min-h-[560px]" />;
 }
+

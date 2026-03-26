@@ -108,12 +108,13 @@ async function submitTradeCommandWithAction(
   const takeProfit = numberValue(formData, "take_profit");
   const ticketReferencia = textValue(formData, "ticket_referencia");
 
+  const isPartialClose = action === "partial";
   const tipo =
     action === "buy"
       ? "open_buy"
       : action === "sell"
         ? "open_sell"
-        : action === "partial"
+        : isPartialClose
           ? "partial_close_position"
           : "close_position";
 
@@ -123,7 +124,8 @@ async function submitTradeCommandWithAction(
 
   const payload = {
     origem: "dashboard_manual",
-    closeFraction: tipo === "partial_close_position" ? 0.5 : undefined,
+    action: isPartialClose ? "partial_close" : tipo,
+    closeFraction: isPartialClose ? 0.5 : undefined,
   };
 
   const { error } = await adminClient.from("comandos_trading").insert({
@@ -132,9 +134,9 @@ async function submitTradeCommandWithAction(
     ativo,
     timeframe,
     tipo,
-    lote: tipo === "close_position" || tipo === "partial_close_position" ? null : lote,
-    stop_loss: tipo === "close_position" || tipo === "partial_close_position" ? null : stopLoss,
-    take_profit: tipo === "close_position" || tipo === "partial_close_position" ? null : takeProfit,
+    lote: tipo === "open_buy" || tipo === "open_sell" ? lote : null,
+    stop_loss: tipo === "open_buy" || tipo === "open_sell" ? stopLoss : null,
+    take_profit: tipo === "open_buy" || tipo === "open_sell" ? takeProfit : null,
     ticket_referencia: ticketReferencia || null,
     payload,
   });
@@ -168,3 +170,6 @@ export async function submitTradeCommand(formData: FormData) {
   const normalizedAction = action === "sell" ? "sell" : action === "close" ? "close" : "buy";
   return submitTradeCommandWithAction(normalizedAction, formData);
 }
+
+
+
