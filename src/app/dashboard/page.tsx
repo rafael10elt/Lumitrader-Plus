@@ -1,7 +1,7 @@
 ﻿import Link from "next/link";
 import { redirect } from "next/navigation";
 import { signout } from "@/app/login/actions";
-import { DashboardRealtime } from "@/components/dashboard/dashboard-realtime";
+import { DashboardRealtimeFixed } from "@/components/dashboard/dashboard-realtime-fixed";
 import { SignoutButton } from "@/components/auth/signout-button";
 import { requireAuthenticatedUser } from "@/lib/auth";
 import type { MarketCandle } from "@/lib/backend/types";
@@ -98,6 +98,7 @@ export type DashboardHistoryFilters = {
 
 export type DashboardOpenOperation = {
   id: string;
+  ticket?: string | null;
   direction: "buy" | "sell";
   lot: number;
   entryPrice: number;
@@ -214,7 +215,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
   const openOperationQuery = supabase
     .from("operacoes")
-    .select("id, direcao, lote, preco_entrada, stop_loss, take_profit, lucro_prejuizo, aberta_em, timeframe, ativo")
+    .select("id, direcao, lote, preco_entrada, stop_loss, take_profit, lucro_prejuizo, aberta_em, timeframe, ativo, validacao_ia")
     .eq("user_id", profile.id)
     .eq("conta_trading_id", selectedAccount.id)
     .eq("status", "aberta")
@@ -299,6 +300,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
   const resolvedOpenOperation: DashboardOpenOperation | null = openOperation ? {
     id: openOperation.id,
+    ticket: typeof openOperation.validacao_ia?.ticket === "string" ? openOperation.validacao_ia.ticket : null,
     direction: openOperation.direcao === "compra" ? "buy" : "sell",
     lot: Number(openOperation.lote),
     entryPrice: Number(openOperation.preco_entrada),
@@ -356,7 +358,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
             </div>
           </div>
 
-          <DashboardRealtime
+          <DashboardRealtimeFixed
             profile={profile}
             accounts={validAccounts}
             selectedAccountId={selectedAccount.id}

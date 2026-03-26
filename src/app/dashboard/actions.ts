@@ -1,7 +1,6 @@
 ﻿"use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { requireAuthenticatedUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -15,7 +14,11 @@ function numberValue(formData: FormData, key: string) {
   if (!raw) {
     return null;
   }
-  const value = Number(raw);
+  const normalized = raw
+    .replace(/\s+/g, "")
+    .replace(/\.(?=\d{3}(?:\D|$))/g, "")
+    .replace(",", ".");
+  const value = Number(normalized);
   return Number.isFinite(value) ? value : null;
 }
 
@@ -68,7 +71,7 @@ export async function saveTradingSettings(formData: FormData) {
   });
 
   revalidatePath("/dashboard");
-  redirect(`/dashboard?account=${contaTradingId}`);
+  return;
 }
 
 export async function toggleSystemState(formData: FormData) {
@@ -87,7 +90,7 @@ export async function toggleSystemState(formData: FormData) {
   });
 
   revalidatePath("/dashboard");
-  redirect(`/dashboard?account=${contaTradingId}`);
+  return;
 }
 
 
@@ -107,7 +110,7 @@ export async function submitTradeCommand(formData: FormData) {
   const tipo = action === "buy" ? "open_buy" : action === "sell" ? "open_sell" : "close_position";
 
   if (!contaTradingId || !tipo) {
-    redirect("/dashboard?message=comando_invalido");
+    return;
   }
 
   const payload = {
@@ -128,9 +131,9 @@ export async function submitTradeCommand(formData: FormData) {
   });
 
   if (error) {
-    redirect(`/dashboard?account=${contaTradingId}&message=${encodeURIComponent(error.message)}`);
+    throw new Error(error.message);
   }
 
   revalidatePath("/dashboard");
-  redirect(`/dashboard?account=${contaTradingId}`);
+  return;
 }
