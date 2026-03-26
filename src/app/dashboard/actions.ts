@@ -1,4 +1,4 @@
-"use server";
+﻿"use server";
 
 import { revalidatePath } from "next/cache";
 import { requireAuthenticatedUser } from "@/lib/auth";
@@ -25,8 +25,18 @@ function numberValue(formData: FormData, key: string) {
 async function upsertConfig(profileId: string, contaTradingId: string, configId: string, payload: Record<string, unknown>) {
   const adminClient = createAdminClient();
 
-  if (configId) {
-    await adminClient.from("configuracoes_sessao").update(payload).eq("id", configId);
+  const { data: latestConfig } = await adminClient
+    .from("configuracoes_sessao")
+    .select("id")
+    .eq("conta_trading_id", contaTradingId)
+    .order("atualizado_em", { ascending: false })
+    .order("criado_em", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+
+  const targetConfigId = latestConfig?.id ?? configId;
+  if (targetConfigId) {
+    await adminClient.from("configuracoes_sessao").update(payload).eq("id", targetConfigId);
     return;
   }
 
@@ -170,6 +180,7 @@ export async function submitTradeCommand(formData: FormData) {
   const normalizedAction = action === "sell" ? "sell" : action === "close" ? "close" : "buy";
   return submitTradeCommandWithAction(normalizedAction, formData);
 }
+
 
 
 

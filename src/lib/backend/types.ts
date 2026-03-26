@@ -1,4 +1,4 @@
-export type MarketCandle = {
+﻿export type MarketCandle = {
   time?: string;
   open: number;
   close: number;
@@ -22,6 +22,8 @@ export type TradingEventPayload = {
     free_margin?: number;
     margin_level?: number;
     leverage?: number;
+    open_positions_count?: number;
+    open_position_tickets?: string[];
   };
   operation?: {
     ticket?: string;
@@ -111,4 +113,5 @@ export type ReportPayload = {
     html: string;
   };
 };
+
 

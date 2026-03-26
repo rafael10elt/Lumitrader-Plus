@@ -1,4 +1,4 @@
-import { toCsv, toHtml } from "@/lib/backend/formatters";
+﻿import { toCsv, toHtml } from "@/lib/backend/formatters";
 import { sendReportToN8n } from "@/lib/backend/n8n";
 import { generateAiSummary } from "@/lib/backend/openai";
 import { evaluateAutoOpportunity } from "@/lib/backend/auto-trader";
@@ -10,6 +10,7 @@ import {
   loadAccountExecutionState,
   loadTradingContext,
   recordTradingEvent,
+  reconcileOpenOperations,
   refreshDailyStats,
   updateAccountSnapshot,
 } from "@/lib/backend/supabase";
@@ -30,10 +31,15 @@ export async function processTradingEvent(payload: TradingEventPayload) {
   await updateAccountSnapshot(context.account.id, payload);
 
   if (payload.event === "account_sync") {
+    const currentOpenTickets = Array.isArray(payload.account.open_position_tickets)
+      ? payload.account.open_position_tickets.filter((ticket): ticket is string => typeof ticket === "string" && ticket.length > 0)
+      : [];
+
     const [operationsToday, executionState] = await Promise.all([
       countOperationsToday(context.account.id),
       loadAccountExecutionState(context.account.id),
-    ]);
+      reconcileOpenOperations(context.account.id, currentOpenTickets),
+    ]).then(([nextOperationsToday, nextExecutionState]) => [nextOperationsToday, nextExecutionState] as const);
 
     const signal = evaluateAutoOpportunity(context, payload, operationsToday);
 
@@ -119,6 +125,7 @@ export async function processTradingEvent(payload: TradingEventPayload) {
 
   return report;
 }
+
 
 
 

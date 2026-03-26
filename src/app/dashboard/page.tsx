@@ -1,4 +1,4 @@
-import Link from "next/link";
+﻿import Link from "next/link";
 import { redirect } from "next/navigation";
 import { signout } from "@/app/login/actions";
 import { DashboardRealtimeFixed } from "@/components/dashboard/dashboard-realtime-fixed";
@@ -220,10 +220,11 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
   const openOperationQuery = supabase
     .from("operacoes")
-    .select("id, direcao, lote, preco_entrada, stop_loss, take_profit, lucro_prejuizo, aberta_em, timeframe, ativo, validacao_ia")
+    .select("id, direcao, lote, preco_entrada, stop_loss, take_profit, lucro_prejuizo, aberta_em, fechada_em, timeframe, ativo, validacao_ia")
     .eq("user_id", profile.id)
     .eq("conta_trading_id", selectedAccount.id)
     .eq("status", "aberta")
+    .is("fechada_em", null)
     .order("aberta_em", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -402,5 +403,7 @@ function BlockedState({ title, description, canManage }: { title: string; descri
     </main>
   );
 }
+
+
 
 

@@ -72,6 +72,22 @@ def resolve_filling_mode(symbol: str) -> int:
     return mt5.ORDER_FILLING_IOC
 
 
+def normalize_volume(symbol: str, requested_volume: float, max_volume: float) -> float:
+    info = mt5.symbol_info(symbol)
+    if info is None:
+        return round(min(requested_volume, max_volume), 2)
+
+    volume_min = float(getattr(info, "volume_min", 0.01) or 0.01)
+    volume_step = float(getattr(info, "volume_step", volume_min) or volume_min)
+    volume_max = float(getattr(info, "volume_max", max_volume) or max_volume)
+
+    bounded = min(max(requested_volume, volume_min), min(max_volume, volume_max))
+    steps = round((bounded - volume_min) / volume_step) if volume_step > 0 else 0
+    normalized = volume_min + (steps * volume_step)
+    normalized = min(max(normalized, volume_min), min(max_volume, volume_max))
+    return round(normalized, 2)
+
+
 def utc_iso(timestamp: int) -> str:
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -95,6 +111,8 @@ def fetch_active_accounts() -> List[Dict[str, Any]]:
     response.raise_for_status()
     data = response.json()
     return data.get("accounts", [])
+
+
 
 
 def fetch_pending_commands(account_number: str) -> List[Dict[str, Any]]:
@@ -160,7 +178,7 @@ def execute_command(command: Dict[str, Any]) -> None:
         acknowledge_command(command["id"], "executed", {"retcode": result.retcode, "order": result.order, "deal": result.deal})
         return
 
-    if command_type == "close_position":
+    if command_type in {"close_position", "partial_close_position"}:
         positions = mt5.positions_get(symbol=symbol) or []
         reference_ticket = str(command.get("referenceTicket") or "").strip()
         if reference_ticket:
@@ -174,17 +192,24 @@ def execute_command(command: Dict[str, Any]) -> None:
         if not tick:
             raise RuntimeError(f"Tick indisponivel para {symbol}")
 
+        payload = command.get("payload") or {}
+        close_fraction = payload.get("closeFraction")
+        requested_volume = float(position.volume)
+        is_partial_close = command_type == "partial_close_position" or (isinstance(close_fraction, (int, float)) and 0 < float(close_fraction) < 1)
+        if is_partial_close:
+            requested_volume = normalize_volume(symbol, float(position.volume) * float(close_fraction), float(position.volume))
+
         close_type = mt5.ORDER_TYPE_SELL if position.type == mt5.POSITION_TYPE_BUY else mt5.ORDER_TYPE_BUY
         price = tick.bid if position.type == mt5.POSITION_TYPE_BUY else tick.ask
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
-            "volume": float(position.volume),
+            "volume": requested_volume,
             "type": close_type,
             "position": position.ticket,
             "price": price,
             "deviation": 20,
-            "comment": "Lumitrader close",
+            "comment": "Lumitrader partial close" if is_partial_close else "Lumitrader close",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": filling_mode,
         }
@@ -192,7 +217,14 @@ def execute_command(command: Dict[str, Any]) -> None:
         if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
             raise RuntimeError(f"close order_send falhou: {getattr(result, 'retcode', mt5.last_error())}")
 
-        acknowledge_command(command["id"], "executed", {"retcode": result.retcode, "order": result.order, "deal": result.deal, "closed_position": position.ticket})
+        acknowledge_command(command["id"], "executed", {
+            "retcode": result.retcode,
+            "order": result.order,
+            "deal": result.deal,
+            "closed_position": position.ticket,
+            "partial": is_partial_close,
+            "requested_volume": requested_volume,
+        })
         return
 
     raise RuntimeError(f"Tipo de comando nao suportado: {command_type}")
@@ -205,7 +237,6 @@ def process_commands(account_number: str) -> None:
             execute_command(command)
         except Exception as exc:
             acknowledge_command(command["id"], "failed", error=str(exc))
-
 
 def ensure_terminal() -> None:
     if not mt5.initialize():
@@ -221,7 +252,7 @@ def login_account(account: Dict[str, Any]) -> None:
         raise RuntimeError(f"MT5 login failed for {login}: {mt5.last_error()}")
 
 
-def account_payload(symbol: str | None = None) -> Dict[str, Any]:
+def account_payload(symbol: str | None = None, open_positions: List[Any] | None = None) -> Dict[str, Any]:
     account = mt5.account_info()
     if account is None:
         raise RuntimeError("MT5 account_info returned None")
@@ -233,6 +264,8 @@ def account_payload(symbol: str | None = None) -> Dict[str, Any]:
         tick = mt5.symbol_info_tick(symbol)
         if tick:
             server_time = utc_iso(tick.time)
+
+    positions = open_positions if open_positions is not None else (mt5.positions_get() or [])
 
     return {
         "number": str(account.login),
@@ -248,6 +281,8 @@ def account_payload(symbol: str | None = None) -> Dict[str, Any]:
         "free_margin": float(account.margin_free),
         "margin_level": float(account.margin_level),
         "leverage": int(account.leverage),
+        "open_positions_count": len(positions),
+        "open_position_tickets": [str(position.ticket) for position in positions],
     }
 
 
@@ -265,9 +300,31 @@ def build_position_snapshot(position) -> PositionSnapshot:
     )
 
 
+def calculate_rsi(closes: List[float], period: int = 14) -> float | None:
+    if len(closes) <= period:
+        return None
+
+    deltas = [closes[index] - closes[index - 1] for index in range(1, len(closes))]
+    recent = deltas[-period:]
+    gains = [max(delta, 0.0) for delta in recent]
+    losses = [max(-delta, 0.0) for delta in recent]
+    average_gain = sum(gains) / period
+    average_loss = sum(losses) / period
+
+    if average_loss == 0:
+        return 100.0
+
+    rs = average_gain / average_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+
 def build_market_payload(symbol: str, timeframe_name: str) -> Dict[str, Any]:
     timeframe = TIMEFRAME_MAP.get(timeframe_name, mt5.TIMEFRAME_M5)
-    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, 40) or []
+    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, 40)
+    if rates is None:
+        rates = []
+
     candles = [
         {
             "time": utc_iso(int(rate["time"])),
@@ -279,22 +336,49 @@ def build_market_payload(symbol: str, timeframe_name: str) -> Dict[str, Any]:
         for rate in rates
     ]
 
+    closes = [candle["close"] for candle in candles]
+    highs = [candle["high"] for candle in candles]
+    lows = [candle["low"] for candle in candles]
+
+    moving_average_20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else None
+    rsi = calculate_rsi(closes, 14)
+    support = min(lows[-20:]) if len(lows) >= 20 else None
+    resistance = max(highs[-20:]) if len(highs) >= 20 else None
+
+    trend = None
+    if moving_average_20 is not None and len(closes) >= 2:
+        last_close = closes[-1]
+        previous_close = closes[-2]
+        if last_close > moving_average_20 and last_close >= previous_close:
+            trend = "uptrend"
+        elif last_close < moving_average_20 and last_close <= previous_close:
+            trend = "downtrend"
+        else:
+            trend = "range"
+
     tick = mt5.symbol_info_tick(symbol)
     symbol_info = mt5.symbol_info(symbol)
     notes = [f"Sync do mercado para {symbol} em {timeframe_name}."]
+    if trend:
+        notes.append(f"Tendencia detectada: {trend}.")
+    if rsi is not None:
+        notes.append(f"RSI 14: {rsi:.2f}.")
+    if moving_average_20 is not None:
+        notes.append(f"Media movel 20: {moving_average_20:.2f}.")
 
     return {
-        "trend": None,
-        "rsi": None,
-        "moving_average_20": None,
-        "support": None,
-        "resistance": None,
+        "trend": trend,
+        "rsi": round(rsi, 2) if rsi is not None else None,
+        "moving_average_20": round(moving_average_20, 2) if moving_average_20 is not None else None,
+        "support": round(support, 2) if support is not None else None,
+        "resistance": round(resistance, 2) if resistance is not None else None,
         "notes": notes,
         "candles": candles,
         "spread": float(symbol_info.spread) if symbol_info else None,
         "last_bid": float(tick.bid) if tick else None,
         "last_ask": float(tick.ask) if tick else None,
     }
+
 
 
 def send_event(payload: Dict[str, Any]) -> None:
@@ -317,10 +401,11 @@ def sync_account(account_config: Dict[str, Any]) -> Dict[str, Any]:
     config = account_config.get("config") or {}
     symbol = config.get("ativo") or "XAUUSD"
     timeframe = config.get("timeframe") or "M5"
+    current_positions = mt5.positions_get() or []
     market = build_market_payload(symbol, timeframe)
     payload = {
         "event": "account_sync",
-        "account": account_payload(symbol),
+        "account": account_payload(symbol, current_positions),
         "session": {
             "mode": config.get("modo"),
             "breakeven_enabled": config.get("breakeven_ativo"),
@@ -384,7 +469,9 @@ def handle_closed_positions(account_config: Dict[str, Any], account_state: Dict[
     symbol = config.get("ativo") or "XAUUSD"
     timeframe = config.get("timeframe") or "M5"
     start_of_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    history = mt5.history_deals_get(start_of_day, datetime.now(timezone.utc)) or []
+    history = mt5.history_deals_get(start_of_day, datetime.now(timezone.utc))
+    if history is None:
+        history = []
     account = account_payload(symbol)
     market = build_market_payload(symbol, timeframe)
     recent_history_ids = set(account_state.get("recent_history_ids", []))
@@ -396,10 +483,13 @@ def handle_closed_positions(account_config: Dict[str, Any], account_state: Dict[
         history_id = str(deal.ticket)
         if history_id in recent_history_ids:
             continue
+
         position_id = str(deal.position_id)
         cached_position = open_positions.get(position_id)
+        is_partial_close = cached_position is not None
+
         payload = {
-            "event": "operation_closed",
+            "event": "operation_partially_closed" if is_partial_close else "operation_closed",
             "account": account,
             "session": {
                 "mode": config.get("modo"),
@@ -416,20 +506,20 @@ def handle_closed_positions(account_config: Dict[str, Any], account_state: Dict[
                 "symbol": deal.symbol,
                 "timeframe": timeframe,
                 "side": cached_position["side"] if cached_position else "buy",
-                "lot": float(deal.volume),
+                "lot": float(cached_position["lot"]) if cached_position else float(deal.volume),
                 "entry_price": float(cached_position["entry_price"]) if cached_position else float(deal.price),
                 "exit_price": float(deal.price),
                 "stop_loss": float(cached_position["stop_loss"]) if cached_position else 0,
                 "take_profit": float(cached_position["take_profit"]) if cached_position else 0,
-                "profit_loss": float(deal.profit),
+                "profit_loss": float(cached_position["profit_loss"]) if cached_position else float(deal.profit),
                 "opened_at": cached_position["opened_at"] if cached_position else utc_iso(deal.time),
                 "closed_at": utc_iso(deal.time),
-                "close_reason": str(getattr(deal, "reason", "mt5_close")),
+                "close_reason": "partial_close" if is_partial_close else str(getattr(deal, "reason", "mt5_close")),
             },
         }
         send_event(payload)
         recent_history_ids.add(history_id)
-        if position_id in open_positions:
+        if not is_partial_close and position_id in open_positions:
             del open_positions[position_id]
 
     account_state["open_positions"] = open_positions
@@ -476,3 +566,14 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+
+
+
+

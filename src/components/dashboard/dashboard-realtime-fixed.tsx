@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useEffectEvent, useState, useTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
@@ -188,7 +188,7 @@ export function DashboardRealtimeFixed({
       if (nextStats) setLiveStats(nextStats);
 
       if (nextOperations) {
-        const nextOpenOperation = nextOperations.find((operation) => operation.status === "aberta");
+        const nextOpenOperation = nextOperations.find((operation) => operation.status === "aberta" && !operation.fechada_em);
         setLiveOpenOperation(
           nextOpenOperation
             ? {
@@ -737,5 +737,6 @@ function ToastCard({ toast }: { toast: DashboardToast }) {
     </div>
   );
 }
+
 
 

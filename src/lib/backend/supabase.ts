@@ -1,4 +1,4 @@
-import { createAdminClient } from "@/lib/supabase/admin";
+﻿import { createAdminClient } from "@/lib/supabase/admin";
 import type { ReportPayload, TradingEventPayload } from "@/lib/backend/types";
 
 export type LoadedContext = {
@@ -430,6 +430,40 @@ export async function refreshDailyStats(context: LoadedContext, payload: Trading
 
 
 
+export async function reconcileOpenOperations(accountId: string, openPositionTickets: string[]) {
+  const adminClient = createAdminClient();
+  const normalizedTickets = openPositionTickets
+    .filter((ticket) => typeof ticket === "string" && ticket.length > 0)
+    .map((ticket) => ticket.trim());
+
+  const { data: openRows } = await adminClient
+    .from("operacoes")
+    .select("id, validacao_ia")
+    .eq("conta_trading_id", accountId)
+    .eq("status", "aberta");
+
+  const staleOperationIds = (openRows ?? [])
+    .filter((row) => {
+      const ticket = row.validacao_ia && typeof row.validacao_ia === "object" && typeof row.validacao_ia.ticket === "string"
+        ? row.validacao_ia.ticket
+        : null;
+      return !ticket || !normalizedTickets.includes(ticket);
+    })
+    .map((row) => row.id);
+
+  if (staleOperationIds.length === 0) {
+    return;
+  }
+
+  await adminClient
+    .from("operacoes")
+    .update({
+      status: "fechada",
+      fechada_em: new Date().toISOString(),
+      motivo_fechamento: "mt5_sync_reconcile",
+    })
+    .in("id", staleOperationIds);
+}
 export async function loadAccountExecutionState(accountId: string) {
   const adminClient = createAdminClient();
   const today = new Date();
@@ -487,6 +521,7 @@ export async function enqueueAutoTradeCommand(
     throw new Error(error.message);
   }
 }
+
 
 
 
