@@ -70,3 +70,4 @@ A proposta ideal do projeto e:
 - lote automatico dinamico por risco implementado
 - validacao IA para oportunidades automaticas implementada com cache curto
 - diario tecnico criado para servir como memoria do projeto
+- gating operacional para IA reforcado: so valida oportunidade em PLAY, dentro da janela operacional e sem limites diarios atingidos

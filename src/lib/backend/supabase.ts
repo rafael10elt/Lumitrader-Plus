@@ -40,6 +40,8 @@ export type LoadedContext = {
     timeframe: string;
     breakeven_ativo: boolean;
     trailing_stop_ativo: boolean;
+    horario_inicio: string;
+    horario_fim: string;
     meta_lucro_diaria: number;
     perda_maxima_diaria: number;
     limite_operacoes_ativo: boolean;
@@ -136,7 +138,7 @@ export async function loadTradingContext(accountNumber: string): Promise<LoadedC
       .maybeSingle<LoadedContext["license"]>(),
     adminClient
       .from("configuracoes_sessao")
-      .select("id, sistema_ligado, modo, timeframe, breakeven_ativo, trailing_stop_ativo, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria, ativo")
+      .select("id, sistema_ligado, modo, timeframe, breakeven_ativo, trailing_stop_ativo, horario_inicio, horario_fim, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria, ativo")
       .eq("conta_trading_id", account.id)
       .order("atualizado_em", { ascending: false })
       .limit(1)
@@ -615,3 +617,31 @@ export async function enqueueAutoTradeCommand(
 
 
 
+
+export async function loadDailyOperationSummary(accountId: string) {
+  const adminClient = createAdminClient();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const { data: operations } = await adminClient
+    .from("operacoes")
+    .select("lucro_prejuizo")
+    .eq("conta_trading_id", accountId)
+    .gte("aberta_em", today.toISOString());
+
+  const normalized = operations ?? [];
+  const profitTotal = normalized
+    .map((item) => Number(item.lucro_prejuizo ?? 0))
+    .filter((value) => value > 0)
+    .reduce((sum, value) => sum + value, 0);
+  const lossTotal = normalized
+    .map((item) => Number(item.lucro_prejuizo ?? 0))
+    .filter((value) => value < 0)
+    .reduce((sum, value) => sum + Math.abs(value), 0);
+
+  return {
+    operationsToday: normalized.length,
+    profitTotal,
+    lossTotal,
+  };
+}

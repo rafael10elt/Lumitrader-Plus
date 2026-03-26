@@ -9,6 +9,7 @@ import {
   countOperationsToday,
   enqueueAutoTradeCommand,
   loadAccountExecutionState,
+  loadDailyOperationSummary,
   loadTradingContext,
   recordTradingEvent,
   reconcileOpenOperations,
@@ -23,7 +24,6 @@ const AI_VALIDATION_TTL_MS = 90_000;
 function buildValidationCacheKey(payload: TradingEventPayload, signal: NonNullable<ReturnType<typeof evaluateAutoOpportunity>>) {
   return JSON.stringify({
     account: payload.account.number,
-    symbol: payload.market?.notes?.[0] ?? payload.operation?.symbol ?? null,
     trend: payload.market?.trend ?? null,
     rsi: payload.market?.rsi != null ? Number(payload.market.rsi.toFixed(1)) : null,
     ma20: payload.market?.moving_average_20 != null ? Number(payload.market.moving_average_20.toFixed(2)) : null,
@@ -59,12 +59,19 @@ export async function processTradingEvent(payload: TradingEventPayload) {
 
     await reconcileOpenOperations(context.account.id, currentOpenTickets);
 
-    const [operationsToday, executionState] = await Promise.all([
+    const [operationsToday, executionState, dailySummary] = await Promise.all([
       countOperationsToday(context.account.id),
       loadAccountExecutionState(context.account.id),
+      loadDailyOperationSummary(context.account.id),
     ]);
 
-    const signal = evaluateAutoOpportunity(context, payload, operationsToday);
+    const signal = evaluateAutoOpportunity(
+      context,
+      payload,
+      operationsToday,
+      dailySummary.profitTotal,
+      dailySummary.lossTotal,
+    );
 
     if (signal && !executionState.hasOpenPosition && !executionState.hasPendingCommand) {
       if (hasOpenAiApiKey()) {

@@ -27,6 +27,27 @@ function computeRiskDistance(entry: number, fallback: number | null | undefined)
   return Math.max(structuralDistance, minimumDistance);
 }
 
+function parseTimeToMinutes(timeValue: string) {
+  const [hour, minute] = timeValue.slice(0, 5).split(":").map(Number);
+  return (hour * 60) + minute;
+}
+
+function isWithinTradingWindow(referenceDate: Date, start: string, end: string) {
+  const currentMinutes = (referenceDate.getHours() * 60) + referenceDate.getMinutes();
+  const startMinutes = parseTimeToMinutes(start);
+  const endMinutes = parseTimeToMinutes(end);
+
+  if (startMinutes === endMinutes) {
+    return true;
+  }
+
+  if (startMinutes < endMinutes) {
+    return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+  }
+
+  return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
+}
+
 function computeDynamicLot(args: {
   balance: number;
   equity: number;
@@ -56,8 +77,23 @@ export function evaluateAutoOpportunity(
   context: LoadedContext,
   payload: TradingEventPayload,
   operationsToday: number,
+  dailyProfitTotal = 0,
+  dailyLossTotal = 0,
 ): AutoSignal | null {
-  if (payload.event !== "account_sync" || !payload.market || !context.config?.sistema_ligado) {
+  if (payload.event !== "account_sync" || !payload.market || !context.config?.sistema_ligado || !context.account.ativo) {
+    return null;
+  }
+
+  const referenceDate = payload.account.server_time ? new Date(payload.account.server_time) : new Date();
+  if (!isWithinTradingWindow(referenceDate, context.config.horario_inicio, context.config.horario_fim)) {
+    return null;
+  }
+
+  if (context.config.meta_lucro_diaria > 0 && dailyProfitTotal >= context.config.meta_lucro_diaria) {
+    return null;
+  }
+
+  if (context.config.perda_maxima_diaria > 0 && dailyLossTotal >= context.config.perda_maxima_diaria) {
     return null;
   }
 
@@ -85,7 +121,7 @@ export function evaluateAutoOpportunity(
   }
 
   const floatingLoss = Math.max((payload.account.balance ?? 0) - (payload.account.equity ?? 0), 0);
-  if (context.config.perda_maxima_diaria > 0 && floatingLoss >= context.config.perda_maxima_diaria) {
+  if (context.config.perda_maxima_diaria > 0 && (dailyLossTotal + floatingLoss) >= context.config.perda_maxima_diaria) {
     return null;
   }
 
