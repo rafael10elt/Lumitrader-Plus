@@ -295,7 +295,7 @@ export function DashboardRealtimeFixed({
     params.delete("type");
     params.delete("result");
     persistReloadToast("Conta alterada", "info", "Carregando os dados da conta selecionada.");
-    router.push(`/dashboard?${params.toString()}`);
+    window.location.assign(`/dashboard?${params.toString()}`);
   });
 
   const handleFilterSubmit = useEffectEvent((event: FormEvent<HTMLFormElement>) => {
@@ -737,4 +737,5 @@ function ToastCard({ toast }: { toast: DashboardToast }) {
     </div>
   );
 }
+
 

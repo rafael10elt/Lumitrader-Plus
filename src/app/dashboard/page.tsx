@@ -186,7 +186,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     return <BlockedState title="Nenhuma licenca ativa disponivel" description="Este usuario nao possui conta MT5 licenciada no momento. O dashboard fica bloqueado ate que exista ao menos uma licenca valida." canManage={false} />;
   }
 
-  const selectedAccount = validAccounts.find((item) => item.id === params.account) ?? validAccounts[0];
+  const requestedAccount = typeof params.account === "string" ? params.account.trim() : "";
+  const selectedAccount = validAccounts.find((item) => item.id === requestedAccount || item.numero_conta === requestedAccount) ?? validAccounts[0];
   if (!selectedAccount) {
     redirect("/dashboard");
   }
@@ -401,4 +402,5 @@ function BlockedState({ title, description, canManage }: { title: string; descri
     </main>
   );
 }
+
 
