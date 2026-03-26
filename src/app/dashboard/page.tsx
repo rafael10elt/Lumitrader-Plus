@@ -118,7 +118,7 @@ export type DashboardInsightBundle = {
 
 export type DashboardCommandStatus = {
   id: string;
-  tipo: "open_buy" | "open_sell" | "close_position";
+  tipo: "open_buy" | "open_sell" | "close_position" | "partial_close_position";
   status: "pending" | "processing" | "executed" | "failed" | "cancelled";
   erro: string | null;
   solicitado_em: string;

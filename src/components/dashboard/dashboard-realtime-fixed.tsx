@@ -6,6 +6,7 @@ import {
   saveTradingSettings,
   submitBuyCommand,
   submitCloseCommand,
+  submitPartialCloseCommand,
   submitSellCommand,
   toggleSystemState,
 } from "@/app/dashboard/actions";
@@ -98,6 +99,7 @@ function commandTypeLabel(command: DashboardCommandStatus | null) {
   if (!command) return null;
   if (command.tipo === "open_buy") return "Compra";
   if (command.tipo === "open_sell") return "Venda";
+  if (command.tipo === "partial_close_position") return "Parcial";
   return "Fechamento";
 }
 
@@ -276,7 +278,7 @@ export function DashboardRealtimeFixed({
 
   return (
     <div className="mt-5 grid gap-5">
-      <div className="grid gap-3 lg:grid-cols-5">
+      <div className="grid gap-3 xl:grid-cols-[1.05fr_1fr_1fr_1fr_0.85fr]">
         <HeaderPill label="Ativo" value={liveConfig.ativo} />
         <HeaderPill label="Modo" value={liveConfig.modo === "agressivo" ? "Agressivo" : "Conservador"} />
         <HeaderPill label="Conta" value={liveAccount.numero_conta} />
@@ -284,182 +286,296 @@ export function DashboardRealtimeFixed({
         <HeaderPill label="Status" value={isSystemOnline ? "ONLINE" : "PAUSADO"} online={isSystemOnline} />
       </div>
 
-      <section className="rounded-[28px] border border-white/8 bg-white/4 p-4">
+      <section className="rounded-[28px] border border-white/8 bg-white/4 p-4 sm:p-5">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
             <p className="font-mono text-xs uppercase tracking-[0.26em] text-cyan-200/70">Seletor de licenca</p>
-            <p className="mt-2 max-w-3xl text-sm text-slate-300">Cada conta MT5 opera de forma independente com limites, saldo, equity e metricas proprios.</p>
+            <p className="mt-2 max-w-4xl text-sm text-slate-300">Cada conta MT5 opera de forma independente com limites, saldo, equity, execucao manual e automacao dedicados.</p>
           </div>
-          <form action="/dashboard" className="min-w-0 xl:w-[28rem]">
-            <select name="account" defaultValue={selectedAccountId} onChange={(event) => event.currentTarget.form?.requestSubmit()} className="w-full rounded-[18px] border border-white/10 bg-slate-950/60 px-4 py-3 text-white outline-none">
+          <form action="/dashboard" className="min-w-0 xl:w-[34rem]">
+            <select
+              name="account"
+              defaultValue={selectedAccountId}
+              onChange={(event) => event.currentTarget.form?.requestSubmit()}
+              className="w-full rounded-[18px] border border-white/10 bg-slate-950/60 px-4 py-3 text-white outline-none"
+            >
               {accounts.map((item) => (
-                <option key={item.id} value={item.id}>{item.numero_conta} · {item.nome_cliente} · expira {formatDate(item.license.data_expiracao)}</option>
+                <option key={item.id} value={item.id}>
+                  {`${item.numero_conta} ? ${item.nome_cliente} ? expira ${formatDate(item.license.data_expiracao)}`}
+                </option>
               ))}
             </select>
           </form>
         </div>
       </section>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        <div className="grid min-w-0 gap-5">
-          <section className="grid gap-5 lg:grid-cols-2">
-            <div className="glass-panel min-w-0 rounded-[28px] p-4 sm:p-5">
-              <PanelEyebrow>Controle Central</PanelEyebrow>
-              <h2 className="mt-2 text-2xl font-semibold leading-tight">{isSystemOnline ? "Sistema operacional em modo armado" : "Sistema em pausa"}</h2>
-              <div className="mt-5 grid gap-3 rounded-[22px] border border-lime-400/20 bg-lime-400/8 p-4 text-sm text-lime-200/90 sm:grid-cols-2">
-                <div><p className="text-xs uppercase tracking-[0.22em] text-lime-200/70">Servidor</p><p className="mt-2 break-words">{formatDateTime(liveAccount.server_time)}</p></div>
-                <div><p className="text-xs uppercase tracking-[0.22em] text-lime-200/70">Brasilia</p><p className="mt-2 break-words">{brasiliaClockLabel}</p></div>
-              </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <ToggleCard label="Breakeven" value={liveConfig.breakeven_ativo ? "ON" : "OFF"} />
-                <ToggleCard label="Trailing Stop" value={liveConfig.trailing_stop_ativo ? "ON" : "OFF"} />
-              </div>
-              <form key={`toggle-${selectedAccountId}`} className="mt-4">
-                <input type="hidden" name="config_id" value={liveConfig.id ?? ""} />
-                <input type="hidden" name="conta_trading_id" value={selectedAccountId} />
-                <input type="hidden" name="current_state" value={String(liveConfig.sistema_ligado)} />
-                <input type="hidden" name="ativo" value={liveConfig.ativo} />
-                <input type="hidden" name="timeframe" value={liveConfig.timeframe} />
-                <button formAction={toggleSystemState} className="flex w-full items-center justify-center gap-3 rounded-[24px] bg-linear-to-r from-lime-500 via-lime-400 to-emerald-400 px-5 py-4 text-xl font-semibold text-slate-950 shadow-[0_20px_50px_rgba(157,232,51,0.28)] transition-transform duration-200 hover:-translate-y-0.5"><span className="text-2xl">{liveConfig.sistema_ligado ? "¦" : "?"}</span>{liveConfig.sistema_ligado ? "Pausar automacao" : "Armar automacao"}</button>
-              </form>
-              <div className="mt-4 grid gap-3 rounded-[24px] border border-white/8 bg-white/4 p-4 sm:grid-cols-3">
-                <QuickFact label="Timeframe" value={liveConfig.timeframe} />
-                <QuickFact label="Meta diaria" value={formatAccountCurrency(liveConfig.meta_lucro_diaria, liveAccount)} />
-                <QuickFact label="Perda maxima" value={formatAccountCurrency(liveConfig.perda_maxima_diaria, liveAccount)} />
-              </div>
-              <div className="mt-4 rounded-[24px] border border-white/8 bg-slate-950/35 p-4"><p className="text-sm text-slate-300">Limite de operacoes por dia</p><p className="mt-2 text-xl font-semibold">{liveConfig.limite_operacoes_ativo ? String(liveConfig.limite_operacoes_diaria ?? 0) : "Desativado"}</p></div>
-              <div className="mt-4 rounded-[24px] border border-white/8 bg-slate-950/35 p-4">
-                <p className="text-sm text-slate-300">Canal operacional MT5</p>
-                <p className={`mt-2 text-lg font-semibold ${latestCommandTone}`}>{latestCommandStatus}</p>
-                <p className="mt-2 text-sm text-slate-400">Ultima leitura: {formatDateTime(liveAccount.ultima_sincronizacao)}</p>
-                {latestCommand && latestCommandType ? <p className="mt-2 text-sm text-slate-300">Ultimo comando: {latestCommandType} em {formatDateTime(latestCommand.solicitado_em)}</p> : null}
-                {latestCommand?.erro ? <p className="mt-3 rounded-[18px] border border-red-400/20 bg-red-400/10 px-3 py-2 text-sm text-red-200">{latestCommand.erro}</p> : null}
+      <div className="grid items-start gap-5 2xl:grid-cols-[280px_minmax(0,1.5fr)_320px] xl:grid-cols-[280px_minmax(0,1fr)]">
+        <aside className="grid min-w-0 gap-5 xl:sticky xl:top-5">
+          <section className="glass-panel min-w-0 rounded-[28px] p-4 sm:p-5">
+            <PanelEyebrow>Controle Central</PanelEyebrow>
+            <h2 className="mt-2 text-[1.8rem] font-semibold leading-tight">{isSystemOnline ? "Sistema armado" : "Sistema em pausa"}</h2>
+            <form key={`toggle-${selectedAccountId}`} className="mt-5">
+              <input type="hidden" name="config_id" value={liveConfig.id ?? ""} />
+              <input type="hidden" name="conta_trading_id" value={selectedAccountId} />
+              <input type="hidden" name="current_state" value={String(liveConfig.sistema_ligado)} />
+              <input type="hidden" name="ativo" value={liveConfig.ativo} />
+              <input type="hidden" name="timeframe" value={liveConfig.timeframe} />
+              <button formAction={toggleSystemState} className="flex w-full items-center justify-center gap-3 rounded-[22px] bg-linear-to-r from-lime-500 via-lime-400 to-emerald-400 px-5 py-4 text-lg font-semibold text-slate-950 shadow-[0_20px_50px_rgba(157,232,51,0.28)] transition-transform duration-200 hover:-translate-y-0.5">
+                <span className="text-xl">{liveConfig.sistema_ligado ? "||" : ">"}</span>
+                {liveConfig.sistema_ligado ? "Pausar automacao" : "Armar automacao"}
+              </button>
+            </form>
+            <div className="mt-4 rounded-[24px] border border-lime-400/20 bg-lime-400/8 p-4 text-sm text-lime-200/90">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.22em] text-lime-200/70">Servidor</p>
+                  <p className="mt-2 break-words">{formatDateTime(liveAccount.server_time)}</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.22em] text-lime-200/70">Brasilia</p>
+                  <p className="mt-2 break-words">{brasiliaClockLabel}</p>
+                </div>
               </div>
             </div>
-            <div className="glass-panel min-w-0 rounded-[28px] p-4 sm:p-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0"><PanelEyebrow>Conta de Trading</PanelEyebrow><h2 className="mt-2 break-words text-2xl font-semibold leading-tight">{liveAccount.corretora ?? "Corretora nao informada"}</h2></div>
-                <span className="rounded-full bg-cyan-400/10 px-3 py-1 text-sm text-cyan-100">{liveAccount.numero_conta}</span>
-              </div>
-              <div className="mt-5 space-y-3 rounded-[24px] border border-white/8 bg-slate-950/40 p-4">
-                <DataRow label="Nome do cliente" value={liveAccount.nome_cliente} />
-                <DataRow label="Moeda" value={`${liveAccount.moeda_simbolo} / ${liveAccount.moeda_codigo}`} />
-                <DataRow label="Saldo atual" value={formatAccountCurrency(liveAccount.saldo_atual ?? 0, liveAccount)} />
-                <DataRow label="Equity" value={formatAccountCurrency(liveAccount.equity ?? 0, liveAccount)} />
-                <DataRow label="Margem livre" value={formatAccountCurrency(liveAccount.margem_livre ?? 0, liveAccount)} />
-              </div>
-              <div className="mt-5 rounded-[24px] border border-lime-400/20 bg-lime-400/8 p-4"><p className="text-sm text-lime-200/80">Resultado flutuante</p><p className="mt-3 break-words text-4xl font-bold text-lime-300">{floatingProfit >= 0 ? "+" : "-"}{formatAccountCurrency(Math.abs(floatingProfit), liveAccount)}</p><p className="mt-2 text-sm text-slate-300">Nivel de margem: {liveAccount.nivel_margem ?? 0}%.</p></div>
-              <div className="mt-5 grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
-                <InfoCard eyebrow="Cliente" title={liveAccount.nome_cliente ?? profile.nome ?? "Trader"} detail={`Email: ${profile.email ?? "nao informado"}`} />
-                <InfoCard eyebrow="Licenca" title={`${selectedLicense.status.toUpperCase()} ate ${formatDate(selectedLicense.data_expiracao)}`} detail={`Valor ${formatLicenseCurrency(selectedLicense.valor)}`} />
-                <InfoCard eyebrow="Janela Operacional" title={formatTimeRange(liveConfig.horario_inicio, liveConfig.horario_fim)} detail={`${liveConfig.breakeven_ativo ? "Breakeven ON" : "Breakeven OFF"} / ${liveConfig.trailing_stop_ativo ? "Trailing ON" : "Trailing OFF"}`} />
-              </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-2">
+              <ToggleCard label="Breakeven" value={liveConfig.breakeven_ativo ? "ON" : "OFF"} />
+              <ToggleCard label="Trailing Stop" value={liveConfig.trailing_stop_ativo ? "ON" : "OFF"} />
+            </div>
+            <div className="mt-4 rounded-[24px] border border-white/8 bg-slate-950/35 p-4">
+              <p className="text-sm text-slate-300">Canal operacional MT5</p>
+              <p className={`mt-2 text-lg font-semibold ${latestCommandTone}`}>{latestCommandStatus}</p>
+              <p className="mt-2 text-sm text-slate-400">Ultima leitura: {formatDateTime(liveAccount.ultima_sincronizacao)}</p>
+              {latestCommand && latestCommandType ? <p className="mt-2 text-sm text-slate-300">Ultimo comando: {latestCommandType} em {formatDateTime(latestCommand.solicitado_em)}</p> : null}
+              {latestCommand?.erro ? <p className="mt-3 rounded-[18px] border border-red-400/20 bg-red-400/10 px-3 py-2 text-sm text-red-200">{latestCommand.erro}</p> : null}
             </div>
           </section>
 
-          <section className="glass-panel min-w-0 rounded-[28px] p-5">
-            <PanelEyebrow>Parametros desta conta</PanelEyebrow>
-            <form key={`settings-${selectedAccountId}`} className="mt-4 grid gap-4 md:grid-cols-2">
-              <input type="hidden" name="config_id" value={liveConfig.id ?? ""} />
-              <input type="hidden" name="conta_trading_id" value={selectedAccountId} />
-              <input type="hidden" name="current_system_state" value={String(liveConfig.sistema_ligado)} />
-              <SettingsField label="Ativo" name="ativo" defaultValue={liveConfig.ativo} />
-              <label className="grid gap-2"><span className="text-sm text-slate-300">Timeframe</span><select name="timeframe" defaultValue={liveConfig.timeframe} className="rounded-[18px] border border-white/10 bg-slate-950/50 px-4 py-3 text-white outline-none">{["M1", "M5", "M15", "M30", "H1"].map((timeframe) => <option key={timeframe} value={timeframe}>{timeframe}</option>)}</select></label>
-              <label className="grid gap-2"><span className="text-sm text-slate-300">Modo</span><select name="modo" defaultValue={liveConfig.modo} className="rounded-[18px] border border-white/10 bg-slate-950/50 px-4 py-3 text-white outline-none"><option value="agressivo">Agressivo</option><option value="conservador">Conservador</option></select></label>
-              <SettingsField label="Horario inicio" name="horario_inicio" type="time" defaultValue={liveConfig.horario_inicio.slice(0, 5)} />
-              <SettingsField label="Horario fim" name="horario_fim" type="time" defaultValue={liveConfig.horario_fim.slice(0, 5)} />
-              <SettingsField label="Meta diaria" name="meta_lucro_diaria" type="text" inputMode="decimal" defaultValue={String(liveConfig.meta_lucro_diaria)} />
-              <SettingsField label="Perda maxima diaria" name="perda_maxima_diaria" type="text" inputMode="decimal" defaultValue={String(liveConfig.perda_maxima_diaria)} />
-              <SettingsField label="Limite de operacoes" name="limite_operacoes_diaria" type="text" inputMode="numeric" defaultValue={String(liveConfig.limite_operacoes_diaria ?? "")} />
-              <div className="grid gap-3 rounded-[18px] border border-white/8 bg-slate-950/35 p-4">
-                <CheckBox label="Breakeven ativo" name="breakeven_ativo" defaultChecked={liveConfig.breakeven_ativo} />
-                <CheckBox label="Trailing stop ativo" name="trailing_stop_ativo" defaultChecked={liveConfig.trailing_stop_ativo} />
-                <CheckBox label="Limite de operacoes ativo" name="limite_operacoes_ativo" defaultChecked={liveConfig.limite_operacoes_ativo} />
-              </div>
-              <div className="flex md:col-span-2 md:justify-end"><button formAction={saveTradingSettings} className="w-full rounded-[18px] bg-linear-to-r from-lime-500 via-lime-400 to-emerald-400 px-5 py-3 text-sm font-semibold text-slate-950 md:w-auto">Salvar parametros</button></div>
-            </form>
+          <section className="glass-panel min-w-0 rounded-[28px] p-4 sm:p-5">
+            <PanelEyebrow>Monitor da Conta</PanelEyebrow>
+            <div className="mt-5 space-y-3 rounded-[24px] border border-white/8 bg-slate-950/40 p-4">
+              <DataRow label="Ativo" value={liveConfig.ativo} />
+              <DataRow label="Timeframe" value={liveConfig.timeframe} />
+              <DataRow label="Modo" value={liveConfig.modo === "agressivo" ? "Agressivo" : "Conservador"} />
+              <DataRow label="Janela operacional" value={formatTimeRange(liveConfig.horario_inicio, liveConfig.horario_fim)} />
+              <DataRow label="Meta diaria" value={formatAccountCurrency(liveConfig.meta_lucro_diaria, liveAccount)} />
+              <DataRow label="Perda maxima" value={formatAccountCurrency(liveConfig.perda_maxima_diaria, liveAccount)} />
+              <DataRow label="Lim. operacoes" value={liveConfig.limite_operacoes_ativo ? String(liveConfig.limite_operacoes_diaria ?? 0) : "Desativado"} />
+            </div>
           </section>
-        </div>
+        </aside>
 
         <div className="grid min-w-0 gap-5">
           <section className="glass-panel min-w-0 overflow-hidden rounded-[28px] p-4 sm:p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3"><div className="min-w-0"><PanelEyebrow>Grafico em Tempo Real</PanelEyebrow><h2 className="mt-2 break-words text-2xl font-semibold">Painel tecnico {liveConfig.ativo}</h2></div><span className="w-fit rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs uppercase tracking-[0.25em] text-cyan-200">{liveConfig.timeframe}</span></div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <PanelEyebrow>Grafico em Tempo Real</PanelEyebrow>
+                <h2 className="mt-2 break-words text-3xl font-semibold">Painel tecnico {liveConfig.ativo}</h2>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs uppercase tracking-[0.25em] text-cyan-200">{liveConfig.timeframe}</span>
+                <span className="rounded-full bg-white/6 px-3 py-1 text-sm text-slate-200">{liveAccount.numero_conta}</span>
+              </div>
+            </div>
             <TradingViewChart initialSymbol={liveConfig.ativo} initialTimeframe={liveConfig.timeframe} />
           </section>
-          <section className="glass-panel min-w-0 rounded-[28px] p-5">
-            <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><PanelEyebrow>Operacao Atual</PanelEyebrow><h2 className="mt-2 break-words text-2xl font-semibold leading-tight">{liveOpenOperation ? `${liveOpenOperation.direction === "buy" ? "Compra" : "Venda"} ${liveOpenOperation.symbol}` : "Nenhuma operacao aberta"}</h2></div>{liveOpenOperation ? <span className={`rounded-full px-3 py-1 text-sm font-semibold ${floatingProfit >= 0 ? "bg-lime-400/12 text-lime-300" : "bg-red-400/12 text-red-300"}`}>{floatingProfit >= 0 ? "No lucro" : "No prejuizo"}</span> : null}</div>
-            {liveOpenOperation ? (
-              <div className="mt-5 grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
-                <StatRow label="Direcao" value={liveOpenOperation.direction === "buy" ? "Compra" : "Venda"} />
-                <StatRow label="Lote" value={liveOpenOperation.lot.toFixed(2)} />
-                <StatRow label="Entrada" value={formatAccountCurrency(liveOpenOperation.entryPrice, liveAccount)} />
-                <StatRow label="Timeframe" value={liveOpenOperation.timeframe} />
-                <StatRow label="P/L em tempo real" value={`${floatingProfit >= 0 ? "+" : "-"}${formatAccountCurrency(Math.abs(floatingProfit), liveAccount)}`} valueTone={floatingProfit >= 0 ? "text-lime-400" : "text-red-400"} />
-                <StatRow label="PnL" value={`${liveAccount.saldo_atual ? ((floatingProfit / Math.max(liveAccount.saldo_atual, 1)) * 100).toFixed(2) : "0.00"}%`} valueTone={floatingProfit >= 0 ? "text-lime-400" : "text-red-400"} />
-                <StatRow label="Stop Loss" value={liveOpenOperation.stopLoss != null ? formatAccountCurrency(liveOpenOperation.stopLoss, liveAccount) : "--"} />
-                <StatRow label="Take Profit" value={liveOpenOperation.takeProfit != null ? formatAccountCurrency(liveOpenOperation.takeProfit, liveAccount) : "--"} />
+
+          <section className="grid gap-5 2xl:grid-cols-[minmax(0,1.3fr)_390px]">
+            <section className="glass-panel min-w-0 rounded-[28px] p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <PanelEyebrow>Operacao Atual</PanelEyebrow>
+                  <h2 className="mt-2 break-words text-2xl font-semibold leading-tight">{liveOpenOperation ? `${liveOpenOperation.direction === "buy" ? "Compra" : "Venda"} ${liveOpenOperation.symbol}` : "Nenhuma operacao aberta"}</h2>
+                </div>
+                {liveOpenOperation ? (
+                  <span className={`rounded-full px-3 py-1 text-sm font-semibold ${floatingProfit >= 0 ? "bg-lime-400/12 text-lime-300" : "bg-red-400/12 text-red-300"}`}>
+                    {floatingProfit >= 0 ? "No lucro" : "No prejuizo"}
+                  </span>
+                ) : null}
               </div>
-            ) : <div className="mt-5 rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-400">Assim que houver uma posicao aberta nesta conta, o painel mostra direcao, lote, entrada, P/L e PnL em tempo real.</div>}
+              {liveOpenOperation ? (
+                <div className="mt-5 grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
+                  <StatRow label="Direcao" value={liveOpenOperation.direction === "buy" ? "Compra" : "Venda"} />
+                  <StatRow label="Entrada" value={formatAccountCurrency(liveOpenOperation.entryPrice, liveAccount)} />
+                  <StatRow label="Lote" value={liveOpenOperation.lot.toFixed(2)} />
+                  <StatRow label="Timeframe" value={liveOpenOperation.timeframe} />
+                  <StatRow label="P/L em tempo real" value={`${floatingProfit >= 0 ? "+" : "-"}${formatAccountCurrency(Math.abs(floatingProfit), liveAccount)}`} valueTone={floatingProfit >= 0 ? "text-lime-400" : "text-red-400"} />
+                  <StatRow label="PnL" value={`${liveAccount.saldo_atual ? ((floatingProfit / Math.max(liveAccount.saldo_atual, 1)) * 100).toFixed(2) : "0.00"}%`} valueTone={floatingProfit >= 0 ? "text-lime-400" : "text-red-400"} />
+                  <StatRow label="Stop Loss" value={liveOpenOperation.stopLoss != null ? formatAccountCurrency(liveOpenOperation.stopLoss, liveAccount) : "--"} />
+                  <StatRow label="Take Profit" value={liveOpenOperation.takeProfit != null ? formatAccountCurrency(liveOpenOperation.takeProfit, liveAccount) : "--"} />
+                </div>
+              ) : (
+                <div className="mt-5 rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-400">Assim que houver uma posicao aberta nesta conta, o painel mostra direcao, lote, entrada, P/L e PnL em tempo real.</div>
+              )}
+            </section>
+
+            <section className="glass-panel min-w-0 rounded-[28px] p-5">
+              <PanelEyebrow>Execucao Manual</PanelEyebrow>
+              <form key={`manual-${selectedAccountId}-${liveOpenOperation?.id ?? "idle"}`} className="mt-4 grid gap-4">
+                <input type="hidden" name="conta_trading_id" value={selectedAccountId} />
+                <input type="hidden" name="ativo" value={liveConfig.ativo} />
+                <input type="hidden" name="timeframe" value={liveConfig.timeframe} />
+                <input type="hidden" name="ticket_referencia" value={liveOpenOperation?.ticket ?? ""} />
+                <SettingsField label="Lote" name="lote" type="text" inputMode="decimal" defaultValue={liveOpenOperation ? liveOpenOperation.lot.toFixed(2).replace(".", ",") : "0,10"} />
+                <SettingsField label="Stop Loss" name="stop_loss" type="text" inputMode="decimal" defaultValue={liveOpenOperation?.stopLoss != null ? String(liveOpenOperation.stopLoss).replace(".", ",") : ""} />
+                <SettingsField label="Take Profit" name="take_profit" type="text" inputMode="decimal" defaultValue={liveOpenOperation?.takeProfit != null ? String(liveOpenOperation.takeProfit).replace(".", ",") : ""} />
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button formAction={submitBuyCommand} className="w-full rounded-[18px] bg-lime-500/18 px-4 py-3 text-sm font-semibold text-lime-200 transition-colors hover:bg-lime-500/24">Comprar</button>
+                  <button formAction={submitSellCommand} className="w-full rounded-[18px] bg-red-500/18 px-4 py-3 text-sm font-semibold text-red-200 transition-colors hover:bg-red-500/24">Vender</button>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button formAction={submitPartialCloseCommand} disabled={!liveOpenOperation} className="w-full rounded-[18px] border border-cyan-400/25 bg-cyan-400/10 px-4 py-3 text-sm font-semibold text-cyan-100 transition-colors hover:bg-cyan-400/16 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500">Parcial 50%</button>
+                  <button formAction={submitCloseCommand} className="w-full rounded-[18px] border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-100 transition-colors hover:bg-white/10">Fechar posicao</button>
+                </div>
+              </form>
+              <div className="mt-4 rounded-[22px] border border-white/8 bg-white/4 p-4 text-sm text-slate-300">O envio manual aceita lote com virgula ou ponto. O botao Parcial reduz 50% do lote da posicao aberta desta conta; se houver falha na VPS, o motivo mais recente aparece no bloco do canal operacional ao lado.</div>
+            </section>
           </section>
+
+          <section className="grid gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+            <div className="grid gap-5">
+              <section className="glass-panel min-w-0 rounded-[28px] p-5">
+                <PanelEyebrow>Estatisticas da Conta</PanelEyebrow>
+                <div className="mt-5 space-y-3">
+                  <DataRow label="Operacoes" value={String(liveStats.operacoes_total)} />
+                  <DataRow label="Vitorias" value={String(liveStats.vitorias)} />
+                  <DataRow label="Derrotas" value={String(liveStats.derrotas)} />
+                  <DataRow label="Maior ganho" value={formatAccountCurrency(liveStats.melhor_operacao, liveAccount)} />
+                  <DataRow label="Maior perda" value={formatAccountCurrency(liveStats.pior_operacao, liveAccount)} />
+                </div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  {metrics.map((item) => <MetricCard key={item.label} label={item.label} value={item.value} tone={item.tone} />)}
+                </div>
+              </section>
+
+              <section className="glass-panel min-w-0 rounded-[28px] p-5">
+                <PanelEyebrow>Insights Operacionais</PanelEyebrow>
+                <div className="mt-5 grid gap-3">
+                  <div className="rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-100">{liveInsightBundle.summary ?? "O monitoramento de mercado ja esta sincronizando candles e notas operacionais. O resumo com IA so aparece depois de uma abertura ou fechamento real registrado no backend."}</div>
+                  {liveInsightBundle.notes.length > 0 ? liveInsightBundle.notes.map((insight) => (
+                    <div key={insight} className="rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-100">
+                      <span className="mr-3 text-lime-300">?</span>
+                      {insight}
+                    </div>
+                  )) : <div className="rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-400">Aguardando novas observacoes do monitoramento desta conta.</div>}
+                </div>
+              </section>
+            </div>
+
+            <section className="glass-panel min-w-0 rounded-[28px] p-5">
+              <PanelEyebrow>Parametros desta Conta</PanelEyebrow>
+              <form key={`settings-${selectedAccountId}`} className="mt-4 grid gap-4 md:grid-cols-2">
+                <input type="hidden" name="config_id" value={liveConfig.id ?? ""} />
+                <input type="hidden" name="conta_trading_id" value={selectedAccountId} />
+                <input type="hidden" name="current_system_state" value={String(liveConfig.sistema_ligado)} />
+                <SettingsField label="Ativo" name="ativo" defaultValue={liveConfig.ativo} />
+                <label className="grid gap-2">
+                  <span className="text-sm text-slate-300">Timeframe</span>
+                  <select name="timeframe" defaultValue={liveConfig.timeframe} className="rounded-[18px] border border-white/10 bg-slate-950/50 px-4 py-3 text-white outline-none">
+                    {"M1,M5,M15,M30,H1".split(",").map((timeframe) => <option key={timeframe} value={timeframe}>{timeframe}</option>)}
+                  </select>
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm text-slate-300">Modo</span>
+                  <select name="modo" defaultValue={liveConfig.modo} className="rounded-[18px] border border-white/10 bg-slate-950/50 px-4 py-3 text-white outline-none">
+                    <option value="agressivo">Agressivo</option>
+                    <option value="conservador">Conservador</option>
+                  </select>
+                </label>
+                <SettingsField label="Horario inicio" name="horario_inicio" type="time" defaultValue={liveConfig.horario_inicio.slice(0, 5)} />
+                <SettingsField label="Horario fim" name="horario_fim" type="time" defaultValue={liveConfig.horario_fim.slice(0, 5)} />
+                <SettingsField label="Meta diaria" name="meta_lucro_diaria" type="text" inputMode="decimal" defaultValue={String(liveConfig.meta_lucro_diaria)} />
+                <SettingsField label="Perda maxima diaria" name="perda_maxima_diaria" type="text" inputMode="decimal" defaultValue={String(liveConfig.perda_maxima_diaria)} />
+                <SettingsField label="Limite de operacoes" name="limite_operacoes_diaria" type="text" inputMode="numeric" defaultValue={String(liveConfig.limite_operacoes_diaria ?? "")} />
+                <div className="grid gap-3 rounded-[18px] border border-white/8 bg-slate-950/35 p-4 md:col-span-2">
+                  <CheckBox label="Breakeven ativo" name="breakeven_ativo" defaultChecked={liveConfig.breakeven_ativo} />
+                  <CheckBox label="Trailing stop ativo" name="trailing_stop_ativo" defaultChecked={liveConfig.trailing_stop_ativo} />
+                  <CheckBox label="Limite de operacoes ativo" name="limite_operacoes_ativo" defaultChecked={liveConfig.limite_operacoes_ativo} />
+                </div>
+                <div className="flex md:col-span-2 md:justify-end">
+                  <button formAction={saveTradingSettings} className="w-full rounded-[18px] bg-linear-to-r from-lime-500 via-lime-400 to-emerald-400 px-5 py-3 text-sm font-semibold text-slate-950 md:w-auto">Salvar parametros</button>
+                </div>
+              </form>
+            </section>
+          </section>
+        </div>
+
+        <aside className="grid min-w-0 gap-5 xl:col-span-2 2xl:col-span-1 2xl:sticky 2xl:top-5">
           <section className="glass-panel min-w-0 rounded-[28px] p-5">
-            <PanelEyebrow>Execucao Manual</PanelEyebrow>
-            <form key={`manual-${selectedAccountId}-${liveOpenOperation?.id ?? "idle"}`} className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto_auto_auto]">
-              <input type="hidden" name="conta_trading_id" value={selectedAccountId} />
-              <input type="hidden" name="ativo" value={liveConfig.ativo} />
-              <input type="hidden" name="timeframe" value={liveConfig.timeframe} />
-              <input type="hidden" name="ticket_referencia" value={liveOpenOperation?.ticket ?? ""} />
-              <SettingsField label="Lote" name="lote" type="text" inputMode="decimal" defaultValue={liveOpenOperation ? liveOpenOperation.lot.toFixed(2).replace(".", ",") : "0,10"} />
-              <SettingsField label="Stop Loss" name="stop_loss" type="text" inputMode="decimal" defaultValue={liveOpenOperation?.stopLoss != null ? String(liveOpenOperation.stopLoss).replace(".", ",") : ""} />
-              <SettingsField label="Take Profit" name="take_profit" type="text" inputMode="decimal" defaultValue={liveOpenOperation?.takeProfit != null ? String(liveOpenOperation.takeProfit).replace(".", ",") : ""} />
-              <div className="flex items-end"><button formAction={submitBuyCommand} className="w-full rounded-[18px] bg-lime-400/12 px-4 py-3 text-sm font-semibold text-lime-200 transition-colors hover:bg-lime-400/18">Comprar</button></div>
-              <div className="flex items-end"><button formAction={submitSellCommand} className="w-full rounded-[18px] bg-red-400/12 px-4 py-3 text-sm font-semibold text-red-200 transition-colors hover:bg-red-400/18">Vender</button></div>
-              <div className="flex items-end"><button formAction={submitCloseCommand} className="w-full rounded-[18px] border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-100 transition-colors hover:bg-white/10">Fechar posicao</button></div>
-            </form>
-            <div className="mt-4 rounded-[22px] border border-white/8 bg-white/4 p-4 text-sm text-slate-300">O envio manual agora aceita lote com virgula ou ponto. Se o comando falhar na VPS, o motivo mais recente aparece no bloco do canal operacional acima.</div>
-          </section>
-          <section className="grid gap-4 sm:grid-cols-2">{metrics.map((item) => <MetricCard key={item.label} label={item.label} value={item.value} tone={item.tone} />)}</section>
-          <section className="glass-panel min-w-0 rounded-[32px] p-5">
-            <PanelEyebrow>Insights Operacionais</PanelEyebrow>
-            <div className="mt-5 grid gap-3">
-              <div className="rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-100">{liveInsightBundle.summary ?? "O monitoramento de mercado ja esta sincronizando candles e notas operacionais. O resumo com IA so aparece depois de uma abertura ou fechamento real registrado no backend."}</div>
-              {liveInsightBundle.notes.length > 0 ? liveInsightBundle.notes.map((insight) => <div key={insight} className="rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-100"><span className="mr-3 text-lime-300">?</span>{insight}</div>) : <div className="rounded-[24px] border border-white/8 bg-white/4 p-4 text-slate-400">Aguardando novas observacoes do monitoramento desta conta.</div>}
+            <PanelEyebrow>Conta de Trading</PanelEyebrow>
+            <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
+              <h2 className="min-w-0 flex-1 break-words text-2xl font-semibold leading-tight">{liveAccount.corretora ?? "Corretora nao informada"}</h2>
+              <span className="rounded-full bg-cyan-400/10 px-3 py-1 text-sm text-cyan-100">{liveAccount.numero_conta}</span>
+            </div>
+            <div className="mt-5 space-y-3 rounded-[24px] border border-white/8 bg-slate-950/40 p-4">
+              <DataRow label="Cliente" value={liveAccount.nome_cliente} />
+              <DataRow label="Licenca" value={`${selectedLicense.nome_plano} ate ${formatDate(selectedLicense.data_expiracao)}`} />
+              <DataRow label="Moeda" value={`${liveAccount.moeda_simbolo} / ${liveAccount.moeda_codigo}`} />
+              <DataRow label="Saldo atual" value={formatAccountCurrency(liveAccount.saldo_atual ?? 0, liveAccount)} />
+              <DataRow label="Equity" value={formatAccountCurrency(liveAccount.equity ?? 0, liveAccount)} />
+              <DataRow label="Margem livre" value={formatAccountCurrency(liveAccount.margem_livre ?? 0, liveAccount)} />
+            </div>
+            <div className="mt-4 rounded-[24px] border border-lime-400/20 bg-lime-400/8 p-4">
+              <p className="text-sm text-lime-200/80">Resultado flutuante</p>
+              <p className={`mt-3 break-words text-4xl font-bold ${floatingProfit >= 0 ? "text-lime-300" : "text-red-300"}`}>
+                {floatingProfit >= 0 ? "+" : "-"}{formatAccountCurrency(Math.abs(floatingProfit), liveAccount)}
+              </p>
+              <p className="mt-2 text-sm text-slate-300">Nivel de margem: {liveAccount.nivel_margem ?? 0}%.</p>
             </div>
           </section>
-        </div>
-      </div>
 
-      <section className="grid gap-6 xl:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)]">
-        <div className="glass-panel min-w-0 rounded-[32px] p-5">
-          <PanelEyebrow>Estatisticas da conta selecionada</PanelEyebrow>
-          <div className="mt-5 space-y-4">
-            <StatRow label="Operacoes no periodo" value={String(liveStats.operacoes_total)} />
-            <StatRow label="Vitorias" value={String(liveStats.vitorias)} />
-            <StatRow label="Derrotas" value={String(liveStats.derrotas)} valueTone="text-red-400" />
-            <StatRow label="Maior ganho" value={formatAccountCurrency(liveStats.melhor_operacao, liveAccount)} />
-            <StatRow label="Maior perda" value={formatAccountCurrency(liveStats.pior_operacao, liveAccount)} valueTone="text-red-400" />
-            <StatRow label="Drawdown atual" value={`${liveStats.drawdown}%`} />
-          </div>
-        </div>
-        <div className="glass-panel min-w-0 rounded-[32px] p-5">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div className="min-w-0"><PanelEyebrow>Historico de Operacoes</PanelEyebrow><h2 className="mt-2 text-2xl font-semibold leading-tight">Timeline operacional da conta selecionada</h2></div><p className="max-w-md text-sm text-slate-400">Licenca e dados desta conta sao atualizados em tempo real.</p></div>
-          <form action="/dashboard" className="mt-5 grid gap-3 rounded-[24px] border border-white/8 bg-white/4 p-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto]">
-            <input type="hidden" name="account" value={selectedAccountId} />
-            <SettingsField label="De" name="from" type="date" defaultValue={historyFilters.from} />
-            <SettingsField label="Ate" name="to" type="date" defaultValue={historyFilters.to} />
-            <label className="grid gap-2"><span className="text-sm text-slate-300">Tipo</span><select name="type" defaultValue={historyFilters.type} className="rounded-[18px] border border-white/10 bg-slate-950/50 px-4 py-3 text-white outline-none"><option value="all">Todos</option><option value="compra">Compra</option><option value="venda">Venda</option></select></label>
-            <label className="grid gap-2"><span className="text-sm text-slate-300">Resultado</span><select name="result" defaultValue={historyFilters.result} className="rounded-[18px] border border-white/10 bg-slate-950/50 px-4 py-3 text-white outline-none"><option value="all">Todos</option><option value="gain">Ganho</option><option value="loss">Perda</option></select></label>
-            <div className="flex items-end"><button className="w-full rounded-[18px] border border-cyan-400/30 bg-cyan-400/10 px-4 py-3 text-sm font-semibold text-cyan-100">Filtrar</button></div>
-          </form>
-          <div className="mt-5 overflow-x-auto rounded-[28px] border border-white/8">
-            <table className="min-w-[720px] w-full border-separate border-spacing-0 overflow-hidden">
-              <thead className="bg-white/6 text-left text-sm uppercase tracking-[0.22em] text-slate-400"><tr><th className="px-4 py-4">Hora</th><th className="px-4 py-4">Tipo</th><th className="px-4 py-4">Lote</th><th className="px-4 py-4">Entrada</th><th className="px-4 py-4">Resultado</th></tr></thead>
-              <tbody className="bg-slate-950/30">
-                {liveHistory.length > 0 ? liveHistory.map((row) => <tr key={row.id} className="text-base even:bg-white/3"><td className="px-4 py-4 text-slate-300">{row.time}</td><td className="px-4 py-4">{row.type}</td><td className="px-4 py-4">{row.lot}</td><td className="px-4 py-4 text-slate-300">{row.entry}</td><td className={`px-4 py-4 font-semibold ${row.resultTone}`}>{liveAccount.moeda_simbolo} {row.result}</td></tr>) : <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">Nenhuma operacao encontrada para os filtros selecionados.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
+          <section className="glass-panel min-w-0 rounded-[28px] p-5">
+            <div className="flex flex-col gap-3">
+              <div className="min-w-0">
+                <PanelEyebrow>Timeline Operacional</PanelEyebrow>
+                <h2 className="mt-2 text-2xl font-semibold leading-tight">Historico recente da conta</h2>
+              </div>
+              <p className="text-sm text-slate-400">Licenca e dados desta conta sao atualizados em tempo real.</p>
+            </div>
+            <form action="/dashboard" className="mt-5 grid gap-3 rounded-[24px] border border-white/8 bg-white/4 p-4">
+              <input type="hidden" name="account" value={selectedAccountId} />
+              <SettingsField label="De" name="from" type="date" defaultValue={historyFilters.from} />
+              <SettingsField label="Ate" name="to" type="date" defaultValue={historyFilters.to} />
+              <label className="grid gap-2">
+                <span className="text-sm text-slate-300">Tipo</span>
+                <select name="type" defaultValue={historyFilters.type} className="rounded-[18px] border border-white/10 bg-slate-950/50 px-4 py-3 text-white outline-none">
+                  <option value="all">Todos</option>
+                  <option value="compra">Compra</option>
+                  <option value="venda">Venda</option>
+                </select>
+              </label>
+              <label className="grid gap-2">
+                <span className="text-sm text-slate-300">Resultado</span>
+                <select name="result" defaultValue={historyFilters.result} className="rounded-[18px] border border-white/10 bg-slate-950/50 px-4 py-3 text-white outline-none">
+                  <option value="all">Todos</option>
+                  <option value="gain">Ganho</option>
+                  <option value="loss">Perda</option>
+                </select>
+              </label>
+              <button className="w-full rounded-[18px] border border-cyan-400/30 bg-cyan-400/10 px-4 py-3 text-sm font-semibold text-cyan-100">Filtrar</button>
+            </form>
+            <div className="mt-5 overflow-hidden rounded-[24px] border border-white/8 bg-slate-950/30">
+              <div className="grid grid-cols-[84px_80px_84px_1fr_110px] gap-3 border-b border-white/8 px-4 py-4 text-xs uppercase tracking-[0.22em] text-slate-400">
+                <span>Hora</span>
+                <span>Tipo</span>
+                <span>Lote</span>
+                <span>Entrada</span>
+                <span>Resultado</span>
+              </div>
+              <div className="max-h-[26rem] overflow-y-auto">
+                {liveHistory.length > 0 ? liveHistory.map((row) => (
+                  <div key={row.id} className="grid grid-cols-[84px_80px_84px_1fr_110px] gap-3 border-b border-white/6 px-4 py-4 text-sm last:border-b-0 even:bg-white/3">
+                    <span className="text-slate-300">{row.time}</span>
+                    <span>{row.type}</span>
+                    <span>{row.lot}</span>
+                    <span className="text-slate-300">{row.entry}</span>
+                    <span className={`font-semibold ${row.resultTone}`}>{liveAccount.moeda_simbolo} {row.result}</span>
+                  </div>
+                )) : <div className="px-4 py-10 text-center text-slate-400">Nenhuma operacao encontrada para os filtros selecionados.</div>}
+              </div>
+            </div>
+          </section>
+        </aside>
+      </div>
     </div>
   );
 }
@@ -503,3 +619,6 @@ function SettingsField({ label, name, defaultValue, type = "text", inputMode }: 
 function CheckBox({ label, name, defaultChecked }: { label: string; name: string; defaultChecked: boolean }) {
   return <label className="flex items-center gap-3 text-sm text-slate-200"><input type="checkbox" name={name} defaultChecked={defaultChecked} className="h-4 w-4 rounded border-white/20 bg-slate-950/60" />{label}</label>;
 }
+
+
+

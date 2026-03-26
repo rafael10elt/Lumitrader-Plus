@@ -94,7 +94,7 @@ export async function toggleSystemState(formData: FormData) {
 }
 
 async function submitTradeCommandWithAction(
-  action: "buy" | "sell" | "close",
+  action: "buy" | "sell" | "close" | "partial",
   formData: FormData,
 ) {
   const { profile } = await requireAuthenticatedUser();
@@ -108,7 +108,14 @@ async function submitTradeCommandWithAction(
   const takeProfit = numberValue(formData, "take_profit");
   const ticketReferencia = textValue(formData, "ticket_referencia");
 
-  const tipo = action === "buy" ? "open_buy" : action === "sell" ? "open_sell" : "close_position";
+  const tipo =
+    action === "buy"
+      ? "open_buy"
+      : action === "sell"
+        ? "open_sell"
+        : action === "partial"
+          ? "partial_close_position"
+          : "close_position";
 
   if (!contaTradingId || !tipo) {
     return;
@@ -116,6 +123,7 @@ async function submitTradeCommandWithAction(
 
   const payload = {
     origem: "dashboard_manual",
+    closeFraction: tipo === "partial_close_position" ? 0.5 : undefined,
   };
 
   const { error } = await adminClient.from("comandos_trading").insert({
@@ -124,9 +132,9 @@ async function submitTradeCommandWithAction(
     ativo,
     timeframe,
     tipo,
-    lote: tipo === "close_position" ? null : lote,
-    stop_loss: tipo === "close_position" ? null : stopLoss,
-    take_profit: tipo === "close_position" ? null : takeProfit,
+    lote: tipo === "close_position" || tipo === "partial_close_position" ? null : lote,
+    stop_loss: tipo === "close_position" || tipo === "partial_close_position" ? null : stopLoss,
+    take_profit: tipo === "close_position" || tipo === "partial_close_position" ? null : takeProfit,
     ticket_referencia: ticketReferencia || null,
     payload,
   });
@@ -149,6 +157,10 @@ export async function submitSellCommand(formData: FormData) {
 
 export async function submitCloseCommand(formData: FormData) {
   return submitTradeCommandWithAction("close", formData);
+}
+
+export async function submitPartialCloseCommand(formData: FormData) {
+  return submitTradeCommandWithAction("partial", formData);
 }
 
 export async function submitTradeCommand(formData: FormData) {
