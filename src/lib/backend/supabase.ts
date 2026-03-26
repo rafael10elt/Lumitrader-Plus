@@ -474,7 +474,8 @@ export async function loadAccountExecutionState(accountId: string) {
       .from("operacoes")
       .select("id", { count: "exact", head: true })
       .eq("conta_trading_id", accountId)
-      .eq("status", "aberta"),
+      .eq("status", "aberta")
+      .is("fechada_em", null),
     adminClient
       .from("comandos_trading")
       .select("id", { count: "exact", head: true })
@@ -501,6 +502,12 @@ export async function enqueueAutoTradeCommand(
   },
 ) {
   const adminClient = createAdminClient();
+  const executionState = await loadAccountExecutionState(context.account.id);
+
+  if (executionState.hasOpenPosition || executionState.hasPendingCommand) {
+    return;
+  }
+
   const { error } = await adminClient.from("comandos_trading").insert({
     user_id: context.user.id,
     conta_trading_id: context.account.id,

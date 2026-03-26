@@ -152,6 +152,11 @@ def execute_command(command: Dict[str, Any]) -> None:
     filling_mode = resolve_filling_mode(symbol)
 
     if command_type in {"open_buy", "open_sell"}:
+        existing_positions = mt5.positions_get() or []
+        if existing_positions:
+            acknowledge_command(command["id"], "failed", error="Regra de ouro: ja existe posicao aberta nesta conta.")
+            return
+
         tick = mt5.symbol_info_tick(symbol)
         if not tick:
             raise RuntimeError(f"Tick indisponivel para {symbol}")
@@ -547,9 +552,9 @@ def main() -> None:
                 try:
                     login_account(account)
                     process_commands(number)
-                    sync_account(account)
                     handle_open_positions(account, account_state)
                     handle_closed_positions(account, account_state)
+                    sync_account(account)
                 except Exception as account_exc:
                     print(f"Account {number} error: {account_exc}")
 

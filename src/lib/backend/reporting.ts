@@ -35,11 +35,12 @@ export async function processTradingEvent(payload: TradingEventPayload) {
       ? payload.account.open_position_tickets.filter((ticket): ticket is string => typeof ticket === "string" && ticket.length > 0)
       : [];
 
+    await reconcileOpenOperations(context.account.id, currentOpenTickets);
+
     const [operationsToday, executionState] = await Promise.all([
       countOperationsToday(context.account.id),
       loadAccountExecutionState(context.account.id),
-      reconcileOpenOperations(context.account.id, currentOpenTickets),
-    ]).then(([nextOperationsToday, nextExecutionState]) => [nextOperationsToday, nextExecutionState] as const);
+    ]);
 
     const signal = evaluateAutoOpportunity(context, payload, operationsToday);
 

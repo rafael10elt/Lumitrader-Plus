@@ -1,4 +1,4 @@
-import type { LoadedContext } from "@/lib/backend/supabase";
+﻿import type { LoadedContext } from "@/lib/backend/supabase";
 import type { TradingEventPayload } from "@/lib/backend/types";
 
 const BASE_AUTO_LOT = 0.1;
@@ -27,6 +27,12 @@ export function evaluateAutoOpportunity(
   operationsToday: number,
 ): AutoSignal | null {
   if (payload.event !== "account_sync" || !payload.market || !context.config?.sistema_ligado) {
+    return null;
+  }
+
+  const hasOpenPositionsInMt5 = (payload.account.open_positions_count ?? 0) > 0
+    || (Array.isArray(payload.account.open_position_tickets) && payload.account.open_position_tickets.length > 0);
+  if (hasOpenPositionsInMt5) {
     return null;
   }
 
@@ -88,3 +94,4 @@ export function evaluateAutoOpportunity(
 
   return null;
 }
+

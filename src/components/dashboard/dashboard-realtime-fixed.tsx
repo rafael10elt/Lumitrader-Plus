@@ -274,6 +274,15 @@ export function DashboardRealtimeFixed({
     };
   }, [refreshSnapshot, selectedAccountId, supabase]);
 
+  useEffect(() => {
+    void refreshSnapshot();
+    const interval = window.setInterval(() => {
+      void refreshSnapshot();
+    }, 4000);
+
+    return () => window.clearInterval(interval);
+  }, [refreshSnapshot, selectedAccountId]);
+
   const runAction = useEffectEvent(async (action: (formData: FormData) => Promise<void>, formData: FormData, successTitle: string, successDetail?: string) => {
     setIsSubmitting(true);
     try {
