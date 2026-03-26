@@ -99,14 +99,6 @@ function commandLabel(command: DashboardCommandStatus | null) {
   return "Cancelado";
 }
 
-function commandTypeLabel(command: DashboardCommandStatus | null) {
-  if (!command) return null;
-  if (command.tipo === "open_buy") return "Compra";
-  if (command.tipo === "open_sell") return "Venda";
-  if (command.tipo === "partial_close_position" || (command.tipo === "close_position" && Number(command.payload?.closeFraction ?? 0) > 0 && Number(command.payload?.closeFraction ?? 0) < 1)) return "Parcial";
-  return "Fechamento";
-}
-
 function commandTone(command: DashboardCommandStatus | null) {
   if (!command) return "text-slate-300";
   if (command.status === "executed") return "text-lime-300";
@@ -128,7 +120,7 @@ export function DashboardRealtimeFixed({
   openOperation,
   commandStatuses,
 }: DashboardRealtimeProps) {
-  const supabase = createClient();
+  const [supabase] = useState(() => createClient());
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [liveAccount, setLiveAccount] = useState(account);
@@ -366,7 +358,6 @@ export function DashboardRealtimeFixed({
   const floatingProfit = (liveAccount.equity ?? 0) - (liveAccount.saldo_atual ?? 0);
   const isSystemOnline = liveConfig.sistema_ligado && Boolean(liveAccount.ativo);
   const latestCommand = liveCommandStatuses[0] ?? null;
-  const latestCommandType = commandTypeLabel(latestCommand);
   const latestCommandStatus = commandLabel(latestCommand);
   const latestCommandTone = commandTone(latestCommand);
   const brasiliaClockLabel = hasMounted && liveNow
@@ -431,7 +422,7 @@ export function DashboardRealtimeFixed({
           </div>
         </section>
 
-        <div className="grid gap-3 xl:grid-cols-12"> 
+        <div className="grid gap-3 xl:grid-cols-12">
           <section className="glass-panel flex h-full flex-col overflow-hidden rounded-[24px] p-3.5 xl:col-span-8">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
@@ -444,7 +435,7 @@ export function DashboardRealtimeFixed({
                 <span className={`rounded-full px-3 py-1 text-sm font-semibold ${floatingProfit >= 0 ? "bg-lime-400/12 text-lime-300" : "bg-red-400/12 text-red-300"}`}>{floatingProfit >= 0 ? "No lucro" : "No prejuizo"}</span>
               </div>
             </div>
-                        <TradingViewChart initialSymbol={liveConfig.ativo} initialTimeframe={liveConfig.timeframe} />
+            <TradingViewChart initialSymbol={liveConfig.ativo} initialTimeframe={liveConfig.timeframe} />
           </section>
 
           <section className="glass-panel rounded-[24px] p-3.5 xl:col-span-4">
@@ -508,44 +499,35 @@ export function DashboardRealtimeFixed({
             </div>
           </section>
 
-          <section className="glass-panel rounded-[24px] p-3.5 xl:col-span-8">
-            <div className="grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_0.8fr]">
-              <div>
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <PanelEyebrow>Operacao Atual</PanelEyebrow>
-                    <h2 className="mt-1 break-words text-[1.25rem] font-semibold leading-tight sm:text-[1.4rem]">{liveOpenOperation ? `${liveOpenOperation.direction === "buy" ? "Compra" : "Venda"} ${liveOpenOperation.symbol}` : "Nenhuma operacao aberta"}</h2>
-                  </div>
-                  {liveOpenOperation ? <span className="rounded-full bg-white/6 px-3 py-1 text-sm text-slate-200">Ticket {liveOpenOperation.ticket ?? "--"}</span> : null}
+          <section className="glass-panel rounded-[24px] p-3 xl:col-span-8">
+            <div className="grid gap-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <PanelEyebrow>Operacao Atual</PanelEyebrow>
+                  <h2 className="mt-1 break-words text-[1.15rem] font-semibold leading-tight sm:text-[1.28rem]">{liveOpenOperation ? `${liveOpenOperation.direction === "buy" ? "Compra" : "Venda"} ${liveOpenOperation.symbol}` : "Nenhuma operacao aberta"}</h2>
                 </div>
-
-                {liveOpenOperation ? (
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                    <CompactMetric label="Direcao" value={liveOpenOperation.direction === "buy" ? "Compra" : "Venda"} tone={liveOpenOperation.direction === "buy" ? "text-lime-300" : "text-red-300"} compact />
-                    <CompactMetric label="Entrada" value={liveOpenOperation.entryPrice.toFixed(2)} compact />
-                    <CompactMetric label="Lote" value={liveOpenOperation.lot.toFixed(2)} compact />
-                    <CompactMetric label="P/L atual" value={`${floatingProfit >= 0 ? "+" : "-"}${formatAccountCurrency(Math.abs(floatingProfit), liveAccount)}`} tone={floatingProfit >= 0 ? "text-lime-400" : "text-red-400"} compact />
-                    <CompactMetric label="Stop Loss" value={liveOpenOperation.stopLoss != null ? liveOpenOperation.stopLoss.toFixed(2) : "--"} tone="text-red-300" compact />
-                    <CompactMetric label="Take Profit" value={liveOpenOperation.takeProfit != null ? liveOpenOperation.takeProfit.toFixed(2) : "--"} tone="text-lime-300" compact />
-                  </div>
-                ) : (
-                  <div className="mt-3 rounded-[18px] border border-white/8 bg-white/4 p-4 text-sm text-slate-400">Assim que houver uma posicao aberta, este bloco consolida direcao, lote, entrada, P/L e niveis de saida sem deslocar a leitura do grafico.</div>
-                )}
+                {liveOpenOperation ? <span className="rounded-full bg-white/6 px-3 py-1 text-sm text-slate-200">Ticket {liveOpenOperation.ticket ?? "--"}</span> : null}
               </div>
 
-              <div className="rounded-[18px] border border-white/8 bg-white/4 p-3.5">
-                <PanelEyebrow>Insights</PanelEyebrow>
-                <div className="mt-2 grid gap-2">
-                  <div className="rounded-[14px] border border-white/8 bg-slate-950/35 p-3 text-sm text-slate-100">{liveInsightBundle.summary ?? "Sem resumo operacional recente para esta conta."}</div>
-                  {(liveInsightBundle.notes.length > 0 ? liveInsightBundle.notes.slice(0, 4) : ["Aguardando novas observacoes do monitoramento desta conta."]).map((insight) => (
-                    <div key={insight} className="rounded-[14px] border border-white/8 bg-slate-950/35 p-3 text-sm text-slate-300">{insight}</div>
-                  ))}
-                </div>
-              </div>
+              {liveOpenOperation ? (
+                <>
+                  <div className="grid gap-2 xl:grid-cols-2">
+                    <InlineMetric label="Direcao" value={liveOpenOperation.direction === "buy" ? "Compra" : "Venda"} tone={liveOpenOperation.direction === "buy" ? "text-lime-300" : "text-red-300"} />
+                    <InlineMetric label="Entrada" value={liveOpenOperation.entryPrice.toFixed(2)} />
+                    <InlineMetric label="Lote" value={liveOpenOperation.lot.toFixed(2)} />
+                    <InlineMetric label="P/L atual" value={`${floatingProfit >= 0 ? "+" : "-"}${formatAccountCurrency(Math.abs(floatingProfit), liveAccount)}`} tone={floatingProfit >= 0 ? "text-lime-400" : "text-red-400"} />
+                    <InlineMetric label="Stop Loss" value={liveOpenOperation.stopLoss != null ? liveOpenOperation.stopLoss.toFixed(2) : "--"} tone="text-red-300" />
+                    <InlineMetric label="Take Profit" value={liveOpenOperation.takeProfit != null ? liveOpenOperation.takeProfit.toFixed(2) : "--"} tone="text-lime-300" />
+                  </div>
+                  <div className="rounded-[16px] border border-white/8 bg-white/4 px-3.5 py-3 text-sm text-slate-300">{liveInsightBundle.summary ?? liveInsightBundle.notes[0] ?? "Sem resumo operacional recente para esta conta."}</div>
+                </>
+              ) : (
+                <div className="rounded-[18px] border border-white/8 bg-white/4 p-4 text-sm text-slate-400">Assim que houver uma posicao aberta, este bloco consolida direcao, lote, entrada, P/L e niveis de saida sem deslocar a leitura do grafico.</div>
+              )}
             </div>
           </section>
 
-          <section className="glass-panel rounded-[24px] p-3.5 xl:col-span-4">
+          <section className="glass-panel rounded-[24px] p-3.5 xl:col-span-4 xl:row-span-2">
             <PanelEyebrow>Execucao e Parametros</PanelEyebrow>
             <form key={`manual-${selectedAccountId}-${liveOpenOperation?.id ?? "idle"}`} onSubmit={handleManualSubmit} className="mt-3 grid gap-3 rounded-[18px] border border-white/8 bg-white/4 p-3.5">
               <input type="hidden" name="conta_trading_id" value={selectedAccountId} />
@@ -601,8 +583,8 @@ export function DashboardRealtimeFixed({
 
           <section className="glass-panel rounded-[24px] p-3.5 xl:col-span-5">
             <PanelEyebrow>Estatisticas da Conta</PanelEyebrow>
-            <div className="mt-3 grid gap-2 md:grid-cols-2">
-              {metrics.map((item) => <MetricCard key={item.label} label={item.label} value={item.value} tone={item.tone} />)}
+            <div className="mt-3 grid gap-2">
+              {metrics.map((item) => <InlineMetric key={item.label} label={item.label} value={item.value} tone={item.tone} />)}
             </div>
             <div className="mt-3 grid gap-2 rounded-[18px] border border-white/8 bg-slate-950/35 p-3.5">
               <DataRow label="Operacoes" value={String(liveStats.operacoes_total)} compact />
@@ -627,63 +609,63 @@ export function DashboardRealtimeFixed({
               </div>
               <div className="grid gap-2">
                 {(liveInsightBundle.notes.length > 0 ? liveInsightBundle.notes.slice(0, 6) : ["Sem observacoes adicionais no momento."]).map((item) => (
-                  <div key={item} className="rounded-[16px] border border-white/8 bg-white/4 px-3.5 py-3 text-sm text-slate-200">{item}</div>
+                  <div key={item} className="flex items-start gap-3 rounded-[16px] border border-white/8 bg-white/4 px-3.5 py-3 text-sm text-slate-200"><span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-cyan-300" /><span>{item}</span></div>
                 ))}
               </div>
             </div>
           </section>
+
+          <section className="glass-panel rounded-[24px] p-3.5 xl:col-span-12">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <PanelEyebrow>Timeline Operacional</PanelEyebrow>
+                <p className="mt-1 text-sm text-slate-300">Historico consolidado das operacoes fechadas para leitura operacional sem perder o foco do topo do painel.</p>
+              </div>
+              <form onSubmit={handleFilterSubmit} className="grid w-full gap-2 rounded-[18px] border border-white/8 bg-white/4 p-3 sm:grid-cols-2 xl:w-auto xl:grid-cols-[140px_140px_140px_140px_auto]">
+                <SettingsField label="De" name="from" type="date" defaultValue={historyFilters.from} compact />
+                <SettingsField label="Ate" name="to" type="date" defaultValue={historyFilters.to} compact />
+                <label className="grid gap-1.5">
+                  <span className="text-xs uppercase tracking-[0.18em] text-slate-400">Tipo</span>
+                  <select name="type" defaultValue={historyFilters.type} className="rounded-[14px] border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none">
+                    <option value="all">Todos</option>
+                    <option value="compra">Compra</option>
+                    <option value="venda">Venda</option>
+                  </select>
+                </label>
+                <label className="grid gap-1.5">
+                  <span className="text-xs uppercase tracking-[0.18em] text-slate-400">Resultado</span>
+                  <select name="result" defaultValue={historyFilters.result} className="rounded-[14px] border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none">
+                    <option value="all">Todos</option>
+                    <option value="gain">Ganho</option>
+                    <option value="loss">Perda</option>
+                  </select>
+                </label>
+                <button className="rounded-[14px] border border-cyan-400/30 bg-cyan-400/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 xl:self-end">Filtrar</button>
+              </form>
+            </div>
+
+            <div className="mt-3 overflow-hidden rounded-[18px] border border-white/8 bg-slate-950/30">
+              <div className="grid grid-cols-[76px_88px_74px_1fr_112px] gap-3 border-b border-white/8 px-3 py-3 text-[11px] uppercase tracking-[0.22em] text-slate-400 sm:grid-cols-[88px_100px_88px_1fr_128px]">
+                <span>Hora</span>
+                <span>Tipo</span>
+                <span>Lote</span>
+                <span>Entrada</span>
+                <span>Resultado</span>
+              </div>
+              <div className="h-[30rem] overflow-y-auto">
+                {liveHistory.length > 0 ? liveHistory.map((row) => (
+                  <div key={row.id} className="grid grid-cols-[76px_88px_74px_1fr_112px] gap-3 border-b border-white/6 px-3 py-3 text-sm last:border-b-0 even:bg-white/3 sm:grid-cols-[88px_100px_88px_1fr_128px]">
+                    <span className="text-slate-300">{row.time}</span>
+                    <span>{row.type}</span>
+                    <span>{row.lot}</span>
+                    <span className="text-slate-300">{row.entry}</span>
+                    <span className={`font-semibold ${row.resultTone}`}>{liveAccount.moeda_simbolo} {row.result}</span>
+                  </div>
+                )) : <div className="px-4 py-10 text-center text-slate-400">Nenhuma operacao encontrada para os filtros selecionados.</div>}
+              </div>
+            </div>
+          </section>
         </div>
-
-        <section className="glass-panel rounded-[24px] p-3.5">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <PanelEyebrow>Timeline Operacional</PanelEyebrow>
-              <p className="mt-1 text-sm text-slate-300">Historico consolidado das operacoes fechadas para leitura operacional sem perder o foco do topo do painel.</p>
-            </div>
-            <form onSubmit={handleFilterSubmit} className="grid w-full gap-2 rounded-[18px] border border-white/8 bg-white/4 p-3 sm:grid-cols-2 xl:w-auto xl:grid-cols-[150px_150px_150px_150px_auto]">
-              <SettingsField label="De" name="from" type="date" defaultValue={historyFilters.from} compact />
-              <SettingsField label="Ate" name="to" type="date" defaultValue={historyFilters.to} compact />
-              <label className="grid gap-1.5">
-                <span className="text-xs uppercase tracking-[0.18em] text-slate-400">Tipo</span>
-                <select name="type" defaultValue={historyFilters.type} className="rounded-[14px] border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none">
-                  <option value="all">Todos</option>
-                  <option value="compra">Compra</option>
-                  <option value="venda">Venda</option>
-                </select>
-              </label>
-              <label className="grid gap-1.5">
-                <span className="text-xs uppercase tracking-[0.18em] text-slate-400">Resultado</span>
-                <select name="result" defaultValue={historyFilters.result} className="rounded-[14px] border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none">
-                  <option value="all">Todos</option>
-                  <option value="gain">Ganho</option>
-                  <option value="loss">Perda</option>
-                </select>
-              </label>
-              <button className="rounded-[14px] border border-cyan-400/30 bg-cyan-400/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 xl:self-end">Filtrar</button>
-            </form>
-          </div>
-
-          <div className="mt-3 overflow-hidden rounded-[18px] border border-white/8 bg-slate-950/30">
-            <div className="grid grid-cols-[76px_88px_74px_1fr_112px] gap-3 border-b border-white/8 px-3 py-3 text-[11px] uppercase tracking-[0.22em] text-slate-400 sm:grid-cols-[88px_100px_88px_1fr_128px]">
-              <span>Hora</span>
-              <span>Tipo</span>
-              <span>Lote</span>
-              <span>Entrada</span>
-              <span>Resultado</span>
-            </div>
-            <div className="max-h-[20rem] overflow-y-auto">
-              {liveHistory.length > 0 ? liveHistory.map((row) => (
-                <div key={row.id} className="grid grid-cols-[76px_88px_74px_1fr_112px] gap-3 border-b border-white/6 px-3 py-3 text-sm last:border-b-0 even:bg-white/3 sm:grid-cols-[88px_100px_88px_1fr_128px]">
-                  <span className="text-slate-300">{row.time}</span>
-                  <span>{row.type}</span>
-                  <span>{row.lot}</span>
-                  <span className="text-slate-300">{row.entry}</span>
-                  <span className={`font-semibold ${row.resultTone}`}>{liveAccount.moeda_simbolo} {row.result}</span>
-                </div>
-              )) : <div className="px-4 py-10 text-center text-slate-400">Nenhuma operacao encontrada para os filtros selecionados.</div>}
-            </div>
-          </div>
-        </section>
       </div>
 
       <div className="pointer-events-none fixed bottom-4 right-4 z-50 grid max-w-[320px] gap-2">
@@ -719,8 +701,8 @@ function CompactMetric({ label, value, tone = "text-white", compact = false }: {
   return <div className="rounded-[16px] border border-white/8 bg-white/4 px-3.5 py-3"><p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{label}</p><p className={`mt-1.5 break-words font-semibold ${compact ? "text-base" : "text-xl"} ${tone}`}>{value}</p></div>;
 }
 
-function MetricCard({ label, value, tone }: { label: string; value: string; tone: string }) {
-  return <div className="rounded-[18px] border border-white/8 bg-white/4 px-3.5 py-3"><p className="text-xs uppercase tracking-[0.18em] text-slate-400">{label}</p><p className={`mt-2 break-words text-[1.15rem] font-bold ${tone}`}>{value}</p></div>;
+function InlineMetric({ label, value, tone = "text-white" }: { label: string; value: string; tone?: string }) {
+  return <div className="flex items-center justify-between gap-4 rounded-[14px] border border-white/8 bg-white/4 px-3.5 py-2.5"><span className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{label}</span><span className={`text-right text-sm font-semibold ${tone}`}>{value}</span></div>;
 }
 
 function SettingsField({ label, name, defaultValue, type = "text", inputMode, compact = false }: { label: string; name: string; defaultValue: string; type?: string; inputMode?: "none" | "text" | "tel" | "url" | "email" | "numeric" | "decimal" | "search"; compact?: boolean }) {
@@ -755,6 +737,4 @@ function ToastCard({ toast }: { toast: DashboardToast }) {
     </div>
   );
 }
-
-
 
