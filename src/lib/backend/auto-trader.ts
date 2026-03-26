@@ -1,12 +1,18 @@
 import type { LoadedContext } from "@/lib/backend/supabase";
 import type { TradingEventPayload } from "@/lib/backend/types";
 
-type AutoSignal = {
+export type AutoSignal = {
   type: "open_buy" | "open_sell";
   lot: number;
   stopLoss: number;
   takeProfit: number;
   rationale: string;
+};
+
+export type AutoOpportunityAssessment = {
+  signal: AutoSignal | null;
+  status: "blocked" | "ready";
+  reason: string;
 };
 
 const LOT_STEP = 0.01;
@@ -73,34 +79,58 @@ function computeDynamicLot(args: {
   return roundedLot >= MIN_AUTO_LOT ? roundedLot : null;
 }
 
+function blocked(reason: string): AutoOpportunityAssessment {
+  return {
+    signal: null,
+    status: "blocked",
+    reason,
+  };
+}
+
+function ready(signal: AutoSignal, reason: string): AutoOpportunityAssessment {
+  return {
+    signal,
+    status: "ready",
+    reason,
+  };
+}
+
 export function evaluateAutoOpportunity(
   context: LoadedContext,
   payload: TradingEventPayload,
   operationsToday: number,
   dailyProfitTotal = 0,
   dailyLossTotal = 0,
-): AutoSignal | null {
-  if (payload.event !== "account_sync" || !payload.market || !context.config?.sistema_ligado || !context.account.ativo) {
-    return null;
+): AutoOpportunityAssessment {
+  if (payload.event !== "account_sync") {
+    return blocked("Evento sem avaliacao automatica.");
+  }
+
+  if (!payload.market || !context.config) {
+    return blocked("Mercado ou configuracao indisponivel para automacao.");
+  }
+
+  if (!context.account.ativo || !context.config.sistema_ligado) {
+    return blocked("Conta fora de PLAY ou automacao pausada.");
   }
 
   const referenceDate = payload.account.server_time ? new Date(payload.account.server_time) : new Date();
   if (!isWithinTradingWindow(referenceDate, context.config.horario_inicio, context.config.horario_fim)) {
-    return null;
+    return blocked(`Fora da janela operacional ${context.config.horario_inicio.slice(0, 5)}-${context.config.horario_fim.slice(0, 5)}.`);
   }
 
   if (context.config.meta_lucro_diaria > 0 && dailyProfitTotal >= context.config.meta_lucro_diaria) {
-    return null;
+    return blocked("Meta diaria ja atingida.");
   }
 
   if (context.config.perda_maxima_diaria > 0 && dailyLossTotal >= context.config.perda_maxima_diaria) {
-    return null;
+    return blocked("Perda maxima diaria ja atingida.");
   }
 
   const hasOpenPositionsInMt5 = (payload.account.open_positions_count ?? 0) > 0
     || (Array.isArray(payload.account.open_position_tickets) && payload.account.open_position_tickets.length > 0);
   if (hasOpenPositionsInMt5) {
-    return null;
+    return blocked("Regra de ouro ativa: ja existe posicao aberta no MT5.");
   }
 
   const market = payload.market;
@@ -113,16 +143,16 @@ export function evaluateAutoOpportunity(
   const lastAsk = market.last_ask ?? null;
 
   if (!trend || rsi == null || movingAverage20 == null || lastBid == null || lastAsk == null) {
-    return null;
+    return blocked("Dados de mercado insuficientes para validar setup.");
   }
 
   if (context.config.limite_operacoes_ativo && context.config.limite_operacoes_diaria != null && operationsToday >= context.config.limite_operacoes_diaria) {
-    return null;
+    return blocked("Limite diario de operacoes ja atingido.");
   }
 
   const floatingLoss = Math.max((payload.account.balance ?? 0) - (payload.account.equity ?? 0), 0);
   if (context.config.perda_maxima_diaria > 0 && (dailyLossTotal + floatingLoss) >= context.config.perda_maxima_diaria) {
-    return null;
+    return blocked("Perda diaria restante insuficiente para nova entrada.");
   }
 
   if (trend === "uptrend" && rsi >= 55 && rsi <= 68 && lastAsk > movingAverage20) {
@@ -139,13 +169,14 @@ export function evaluateAutoOpportunity(
     });
 
     if (lot != null && stopLoss < entry && takeProfit > entry) {
-      return {
+      const signal: AutoSignal = {
         type: "open_buy",
         lot,
         stopLoss,
         takeProfit,
         rationale: `Signal uptrend RSI ${rsi.toFixed(1)} above MA20 | risk ${(context.config.risco_por_operacao * 100).toFixed(2)}% | lot ${lot.toFixed(2)}`,
       };
+      return ready(signal, `Setup matematico aprovado para compra com lote ${lot.toFixed(2)}.`);
     }
   }
 
@@ -163,15 +194,16 @@ export function evaluateAutoOpportunity(
     });
 
     if (lot != null && stopLoss > entry && takeProfit < entry) {
-      return {
+      const signal: AutoSignal = {
         type: "open_sell",
         lot,
         stopLoss,
         takeProfit,
         rationale: `Signal downtrend RSI ${rsi.toFixed(1)} below MA20 | risk ${(context.config.risco_por_operacao * 100).toFixed(2)}% | lot ${lot.toFixed(2)}`,
       };
+      return ready(signal, `Setup matematico aprovado para venda com lote ${lot.toFixed(2)}.`);
     }
   }
 
-  return null;
+  return blocked("Sem oportunidade matematica valida no momento.");
 }

@@ -213,6 +213,30 @@ export async function updateAccountSnapshot(accountId: string, payload: TradingE
     .eq("id", accountId);
 }
 
+export async function updateAccountAutomationState(accountId: string, status: string, reason: string) {
+  const adminClient = createAdminClient();
+  const { data: accountRow } = await adminClient
+    .from("contas_trading")
+    .select("mercado_snapshot")
+    .eq("id", accountId)
+    .maybeSingle<{ mercado_snapshot?: Record<string, unknown> | null }>();
+
+  const currentSnapshot = accountRow?.mercado_snapshot && typeof accountRow.mercado_snapshot === "object"
+    ? accountRow.mercado_snapshot
+    : {};
+
+  await adminClient
+    .from("contas_trading")
+    .update({
+      mercado_snapshot: {
+        ...currentSnapshot,
+        automation_status: status,
+        automation_reason: reason,
+        automation_updated_at: new Date().toISOString(),
+      },
+    })
+    .eq("id", accountId);
+}
 export async function recordTradingEvent(context: LoadedContext, payload: TradingEventPayload) {
   const adminClient = createAdminClient();
 

@@ -14,6 +14,7 @@ import {
   recordTradingEvent,
   reconcileOpenOperations,
   refreshDailyStats,
+  updateAccountAutomationState,
   updateAccountSnapshot,
 } from "@/lib/backend/supabase";
 import type { ReportPayload, TradingEventPayload } from "@/lib/backend/types";
@@ -21,7 +22,7 @@ import type { ReportPayload, TradingEventPayload } from "@/lib/backend/types";
 const aiValidationCache = new Map<string, { expiresAt: number; approved: boolean; summary: string }>();
 const AI_VALIDATION_TTL_MS = 90_000;
 
-function buildValidationCacheKey(payload: TradingEventPayload, signal: NonNullable<ReturnType<typeof evaluateAutoOpportunity>>) {
+function buildValidationCacheKey(payload: TradingEventPayload, signal: { type: string; lot: number; stopLoss: number; takeProfit: number }) {
   return JSON.stringify({
     account: payload.account.number,
     trend: payload.market?.trend ?? null,
@@ -65,7 +66,7 @@ export async function processTradingEvent(payload: TradingEventPayload) {
       loadDailyOperationSummary(context.account.id),
     ]);
 
-    const signal = evaluateAutoOpportunity(
+    const assessment = evaluateAutoOpportunity(
       context,
       payload,
       operationsToday,
@@ -73,65 +74,79 @@ export async function processTradingEvent(payload: TradingEventPayload) {
       dailySummary.lossTotal,
     );
 
-    if (signal && !executionState.hasOpenPosition && !executionState.hasPendingCommand) {
-      if (hasOpenAiApiKey()) {
-        const cacheKey = buildValidationCacheKey(payload, signal);
-        const cachedDecision = aiValidationCache.get(cacheKey);
-        const now = Date.now();
+    if (!assessment.signal) {
+      await updateAccountAutomationState(context.account.id, assessment.status, assessment.reason);
+      return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: null, aiValidation: assessment.reason };
+    }
 
-        if (cachedDecision && cachedDecision.expiresAt > now) {
-          if (!cachedDecision.approved) {
-            return {
-              synced: true,
-              account: payload.account.number,
-              mode: "fast_sync",
-              autoCommand: null,
-              aiValidation: cachedDecision.summary,
-            };
-          }
+    if (executionState.hasOpenPosition || executionState.hasPendingCommand) {
+      const blockedReason = executionState.hasOpenPosition
+        ? "Automacao bloqueada: ja existe posicao aberta no banco."
+        : "Automacao bloqueada: existe comando pendente ou em processamento.";
+      await updateAccountAutomationState(context.account.id, "blocked", blockedReason);
+      return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: null, aiValidation: blockedReason };
+    }
 
-          await enqueueAutoTradeCommand(context, payload, {
-            ...signal,
-            rationale: `${signal.rationale} | IA: ${cachedDecision.summary}`,
-          });
-          return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: signal.type, aiValidation: cachedDecision.summary };
-        }
+    if (hasOpenAiApiKey()) {
+      const cacheKey = buildValidationCacheKey(payload, assessment.signal);
+      const cachedDecision = aiValidationCache.get(cacheKey);
+      const now = Date.now();
 
-        const aiDecision = await validateTradeOpportunity({
-          context,
-          payload,
-          signal,
-          operationsToday,
-        });
-
-        aiValidationCache.set(cacheKey, {
-          expiresAt: now + AI_VALIDATION_TTL_MS,
-          approved: aiDecision.approved,
-          summary: aiDecision.summary,
-        });
-
-        if (!aiDecision.approved) {
+      if (cachedDecision && cachedDecision.expiresAt > now) {
+        if (!cachedDecision.approved) {
+          await updateAccountAutomationState(context.account.id, "blocked", cachedDecision.summary);
           return {
             synced: true,
             account: payload.account.number,
             mode: "fast_sync",
             autoCommand: null,
-            aiValidation: aiDecision.summary,
+            aiValidation: cachedDecision.summary,
           };
         }
 
         await enqueueAutoTradeCommand(context, payload, {
-          ...signal,
-          rationale: `${signal.rationale} | IA: ${aiDecision.summary}`,
+          ...assessment.signal,
+          rationale: `${assessment.signal.rationale} | IA: ${cachedDecision.summary}`,
         });
-        return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: signal.type, aiValidation: aiDecision.summary };
+        await updateAccountAutomationState(context.account.id, "ready", cachedDecision.summary);
+        return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: assessment.signal.type, aiValidation: cachedDecision.summary };
       }
 
-      await enqueueAutoTradeCommand(context, payload, signal);
-      return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: signal.type, aiValidation: "OpenAI indisponivel; usando validacao matematica." };
+      const aiDecision = await validateTradeOpportunity({
+        context,
+        payload,
+        signal: assessment.signal,
+        operationsToday,
+      });
+
+      aiValidationCache.set(cacheKey, {
+        expiresAt: now + AI_VALIDATION_TTL_MS,
+        approved: aiDecision.approved,
+        summary: aiDecision.summary,
+      });
+
+      if (!aiDecision.approved) {
+        await updateAccountAutomationState(context.account.id, "blocked", aiDecision.summary);
+        return {
+          synced: true,
+          account: payload.account.number,
+          mode: "fast_sync",
+          autoCommand: null,
+          aiValidation: aiDecision.summary,
+        };
+      }
+
+      await enqueueAutoTradeCommand(context, payload, {
+        ...assessment.signal,
+        rationale: `${assessment.signal.rationale} | IA: ${aiDecision.summary}`,
+      });
+      await updateAccountAutomationState(context.account.id, "ready", aiDecision.summary);
+      return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: assessment.signal.type, aiValidation: aiDecision.summary };
     }
 
-    return { synced: true, account: payload.account.number, mode: "fast_sync" };
+    await enqueueAutoTradeCommand(context, payload, assessment.signal);
+    await updateAccountAutomationState(context.account.id, "ready", "OpenAI indisponivel; usando validacao matematica.");
+    return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: assessment.signal.type, aiValidation: "OpenAI indisponivel; usando validacao matematica." };
   }
 
   if (!payload.operation) {

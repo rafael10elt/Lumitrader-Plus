@@ -425,7 +425,7 @@ def sync_account(account_config: Dict[str, Any]) -> Dict[str, Any]:
             "profit_target": config.get("meta_lucro_diaria"),
             "daily_loss_limit": config.get("perda_maxima_diaria"),
             "operation_limit_enabled": config.get("limite_operacoes_ativo"),
-            "operation_limit": config.get("limite_operacoes_diaria"),
+            "operation_limit": config.get("limite_operacoes_diaria"),`r`n            "risk_per_operation": config.get("risco_por_operacao"),
         },
         "market": market,
     }
@@ -455,7 +455,7 @@ def handle_open_positions(account_config: Dict[str, Any], account_state: Dict[st
                     "profit_target": config.get("meta_lucro_diaria"),
                     "daily_loss_limit": config.get("perda_maxima_diaria"),
                     "operation_limit_enabled": config.get("limite_operacoes_ativo"),
-                    "operation_limit": config.get("limite_operacoes_diaria"),
+                    "operation_limit": config.get("limite_operacoes_diaria"),`r`n            "risk_per_operation": config.get("risco_por_operacao"),
                 },
                 "market": market,
                 "operation": {
@@ -510,7 +510,7 @@ def handle_closed_positions(account_config: Dict[str, Any], account_state: Dict[
                 "profit_target": config.get("meta_lucro_diaria"),
                 "daily_loss_limit": config.get("perda_maxima_diaria"),
                 "operation_limit_enabled": config.get("limite_operacoes_ativo"),
-                "operation_limit": config.get("limite_operacoes_diaria"),
+                "operation_limit": config.get("limite_operacoes_diaria"),`r`n            "risk_per_operation": config.get("risco_por_operacao"),
             },
             "market": market,
             "operation": {

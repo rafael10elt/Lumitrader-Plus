@@ -443,6 +443,9 @@ export function DashboardRealtimeFixed({
     resistance?: number | null;
     open_positions_count?: number | null;
     open_position_tickets?: string[];
+    automation_status?: string | null;
+    automation_reason?: string | null;
+    automation_updated_at?: string | null;
   };
 
   const openPositionTickets = Array.isArray(marketSnapshot.open_position_tickets)
@@ -452,6 +455,8 @@ export function DashboardRealtimeFixed({
     ? marketSnapshot.open_positions_count
     : openPositionTickets.length;
   const fallbackOpenTicket = liveOpenOperation?.ticket ?? (openPositionTickets.length === 1 ? openPositionTickets[0] : null);
+  const automationStatus = typeof marketSnapshot.automation_status === "string" ? marketSnapshot.automation_status : "idle";
+  const automationReason = typeof marketSnapshot.automation_reason === "string" ? marketSnapshot.automation_reason : "Sem diagnostico recente da automacao.";
   const hasDetectedOpenPosition = Boolean(liveOpenOperation) || syncedOpenPositionsCount > 0 || openPositionTickets.length > 0;
   const canManageOpenPosition = Boolean(fallbackOpenTicket) && !isSubmitting;
 
@@ -675,9 +680,10 @@ export function DashboardRealtimeFixed({
                 <DataRow label="Perda maxima" value={formatAccountCurrency(liveConfig.perda_maxima_diaria, liveAccount)} compact />
                 <DataRow label="Limite operacoes" value={liveConfig.limite_operacoes_ativo ? String(liveConfig.limite_operacoes_diaria ?? 0) : "Desativado"} compact />
                 <DataRow label="Risco por operacao" value={`${((liveConfig.risco_por_operacao ?? 0.01) * 100).toFixed(2)}%`} compact />
+                <DataRow label="IA trader" value={automationStatus === "ready" ? "Pronta" : automationStatus === "blocked" ? "Bloqueada" : "Aguardando"} compact />
               </div>
               <div className="grid gap-2">
-                {(liveInsightBundle.notes.length > 0 ? liveInsightBundle.notes.slice(0, 6) : ["Sem observacoes adicionais no momento."]).map((item) => (
+                {([automationReason, ...(liveInsightBundle.notes.length > 0 ? liveInsightBundle.notes : ["Sem observacoes adicionais no momento."])].filter((item, index, array) => item && array.indexOf(item) === index).slice(0, 6)).map((item) => (
                   <div key={item} className="flex items-start gap-3 rounded-[16px] border border-white/8 bg-white/4 px-3.5 py-3 text-sm text-slate-200"><span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-cyan-300" /><span>{item}</span></div>
                 ))}
               </div>
