@@ -186,6 +186,45 @@ export async function recordTradingEvent(context: LoadedContext, payload: Tradin
   }
 
   if (payload.event === "operation_opened") {
+    if (payload.operation.ticket) {
+      const { data: existingOpen } = await adminClient
+        .from("operacoes")
+        .select("id")
+        .eq("conta_trading_id", context.account.id)
+        .eq("status", "aberta")
+        .is("fechada_em", null)
+        .contains("validacao_ia", { ticket: payload.operation.ticket })
+        .order("aberta_em", { ascending: false })
+        .limit(1)
+        .maybeSingle<{ id: string }>();
+
+      if (existingOpen?.id) {
+        await adminClient
+          .from("operacoes")
+          .update({
+            ativo: payload.operation.symbol,
+            timeframe: payload.operation.timeframe,
+            direcao: payload.operation.side === "buy" ? "compra" : "venda",
+            lote: payload.operation.lot,
+            preco_entrada: payload.operation.entry_price,
+            stop_loss: payload.operation.stop_loss ?? null,
+            take_profit: payload.operation.take_profit ?? null,
+            lucro_prejuizo: payload.operation.profit_loss ?? 0,
+            spread: payload.operation.spread ?? null,
+            volume: payload.operation.volume ?? null,
+            volatilidade: payload.operation.volatility ?? null,
+            aberta_em: payload.operation.opened_at,
+            validacao_ia: {
+              ticket: payload.operation.ticket ?? null,
+              market: payload.market ?? null,
+            },
+          })
+          .eq("id", existingOpen.id);
+
+        return existingOpen.id;
+      }
+    }
+
     const { data: inserted } = await adminClient
       .from("operacoes")
       .insert({
@@ -224,6 +263,7 @@ export async function recordTradingEvent(context: LoadedContext, payload: Tradin
       .select("id, validacao_ia")
       .eq("conta_trading_id", context.account.id)
       .eq("status", "aberta")
+      .is("fechada_em", null)
       .contains("validacao_ia", { ticket: payload.operation.ticket })
       .order("aberta_em", { ascending: false })
       .limit(1)
@@ -232,18 +272,27 @@ export async function recordTradingEvent(context: LoadedContext, payload: Tradin
     latestOpen = ticketMatchedOpen ?? null;
   }
 
-  if (!latestOpen) {
-    const { data: symbolMatchedOpen } = await adminClient
+  if (!latestOpen && payload.operation.symbol) {
+    const { data: symbolMatchedOpenRows } = await adminClient
       .from("operacoes")
       .select("id, validacao_ia")
       .eq("conta_trading_id", context.account.id)
       .eq("status", "aberta")
+      .is("fechada_em", null)
       .eq("ativo", payload.operation.symbol)
       .order("aberta_em", { ascending: false })
-      .limit(1)
-      .maybeSingle<{ id: string; validacao_ia?: Record<string, unknown> | null }>();
+      .limit(2);
 
-    latestOpen = symbolMatchedOpen ?? null;
+    const safeFallback = (symbolMatchedOpenRows ?? []).filter((row) => {
+      const ticket = row.validacao_ia && typeof row.validacao_ia === "object" && typeof row.validacao_ia.ticket === "string"
+        ? row.validacao_ia.ticket
+        : null;
+      return !ticket;
+    });
+
+    if (safeFallback.length === 1) {
+      latestOpen = safeFallback[0] ?? null;
+    }
   }
 
   if (latestOpen?.id) {

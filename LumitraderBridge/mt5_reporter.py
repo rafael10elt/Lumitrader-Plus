@@ -188,8 +188,15 @@ def execute_command(command: Dict[str, Any]) -> None:
         reference_ticket = str(command.get("referenceTicket") or "").strip()
         if reference_ticket:
             positions = [position for position in positions if str(position.ticket) == reference_ticket]
+            if not positions:
+                acknowledge_command(command["id"], "failed", error="Ticket de referencia nao encontrado entre as posicoes abertas.")
+                return
+        elif len(positions) != 1:
+            acknowledge_command(command["id"], "failed", error="Fechamento manual exige ticket explicito quando ha multiplas posicoes ou nenhuma posicao aberta.")
+            return
+
         if not positions:
-            acknowledge_command(command["id"], "executed", {"message": "Nenhuma posicao aberta para fechar."})
+            acknowledge_command(command["id"], "failed", error="Nenhuma posicao aberta para fechar.")
             return
 
         position = positions[0]

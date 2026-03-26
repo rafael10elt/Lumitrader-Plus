@@ -132,6 +132,10 @@ async function submitTradeCommandWithAction(
     return;
   }
 
+  if ((tipo === "close_position" || tipo === "partial_close_position") && !ticketReferencia) {
+    throw new Error("Nao foi possivel identificar o ticket da posicao aberta. Aguarde a sincronizacao do painel e tente novamente.");
+  }
+
   const payload = {
     origem: "dashboard_manual",
     action: isPartialClose ? "partial_close" : tipo,
