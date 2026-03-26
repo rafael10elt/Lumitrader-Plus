@@ -4,7 +4,9 @@ import { useEffect, useEffectEvent, useState, useTransition } from "react";
 import type { AppUser } from "@/lib/auth";
 import {
   saveTradingSettings,
-  submitTradeCommand,
+  submitBuyCommand,
+  submitCloseCommand,
+  submitSellCommand,
   toggleSystemState,
 } from "@/app/dashboard/actions";
 import { createClient } from "@/lib/supabase/client";
@@ -126,7 +128,8 @@ export function DashboardRealtimeFixed({
   const [liveConfig, setLiveConfig] = useState(config);
   const [liveStats, setLiveStats] = useState(stats);
   const [liveHistory, setLiveHistory] = useState(history);
-  const [liveNow, setLiveNow] = useState(() => new Date());
+  const [liveNow, setLiveNow] = useState<Date | null>(null);
+  const [hasMounted, setHasMounted] = useState(false);
   const [liveInsightBundle, setLiveInsightBundle] = useState(insightBundle);
   const [liveOpenOperation, setLiveOpenOperation] = useState(openOperation);
   const [liveCommandStatuses, setLiveCommandStatuses] = useState(commandStatuses);
@@ -222,6 +225,9 @@ export function DashboardRealtimeFixed({
   });
 
   useEffect(() => {
+    setHasMounted(true);
+    setLiveNow(new Date());
+
     const interval = window.setInterval(() => setLiveNow(new Date()), 1000);
     return () => window.clearInterval(interval);
   }, []);
@@ -248,16 +254,18 @@ export function DashboardRealtimeFixed({
   const latestCommandType = commandTypeLabel(latestCommand);
   const latestCommandStatus = commandLabel(latestCommand);
   const latestCommandTone = commandTone(latestCommand);
-  const brasiliaClockLabel = new Intl.DateTimeFormat("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-    timeZone: "America/Sao_Paulo",
-  }).format(liveNow);
+  const brasiliaClockLabel = hasMounted && liveNow
+    ? new Intl.DateTimeFormat("pt-BR", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+        timeZone: "America/Sao_Paulo",
+      }).format(liveNow)
+    : "Sincronizando relogio...";
 
   const metrics = [
     { label: "Lucro do Dia", value: formatAccountCurrency(Math.max(liveStats.lucro_total, 0), liveAccount), tone: "text-lime-400" },
@@ -341,7 +349,7 @@ export function DashboardRealtimeFixed({
                 <DataRow label="Margem livre" value={formatAccountCurrency(liveAccount.margem_livre ?? 0, liveAccount)} />
               </div>
               <div className="mt-5 rounded-[24px] border border-lime-400/20 bg-lime-400/8 p-4"><p className="text-sm text-lime-200/80">Resultado flutuante</p><p className="mt-3 break-words text-4xl font-bold text-lime-300">{floatingProfit >= 0 ? "+" : "-"}{formatAccountCurrency(Math.abs(floatingProfit), liveAccount)}</p><p className="mt-2 text-sm text-slate-300">Nivel de margem: {liveAccount.nivel_margem ?? 0}%.</p></div>
-              <div className="mt-5 grid gap-4 sm:grid-cols-3">
+              <div className="mt-5 grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
                 <InfoCard eyebrow="Cliente" title={liveAccount.nome_cliente ?? profile.nome ?? "Trader"} detail={`Email: ${profile.email ?? "nao informado"}`} />
                 <InfoCard eyebrow="Licenca" title={`${selectedLicense.status.toUpperCase()} ate ${formatDate(selectedLicense.data_expiracao)}`} detail={`Valor ${formatLicenseCurrency(selectedLicense.valor)}`} />
                 <InfoCard eyebrow="Janela Operacional" title={formatTimeRange(liveConfig.horario_inicio, liveConfig.horario_fim)} detail={`${liveConfig.breakeven_ativo ? "Breakeven ON" : "Breakeven OFF"} / ${liveConfig.trailing_stop_ativo ? "Trailing ON" : "Trailing OFF"}`} />
@@ -403,9 +411,9 @@ export function DashboardRealtimeFixed({
               <SettingsField label="Lote" name="lote" type="text" inputMode="decimal" defaultValue={liveOpenOperation ? liveOpenOperation.lot.toFixed(2).replace(".", ",") : "0,10"} />
               <SettingsField label="Stop Loss" name="stop_loss" type="text" inputMode="decimal" defaultValue={liveOpenOperation?.stopLoss != null ? String(liveOpenOperation.stopLoss).replace(".", ",") : ""} />
               <SettingsField label="Take Profit" name="take_profit" type="text" inputMode="decimal" defaultValue={liveOpenOperation?.takeProfit != null ? String(liveOpenOperation.takeProfit).replace(".", ",") : ""} />
-              <div className="flex items-end"><button formAction={submitTradeCommand} name="trade_action" value="buy" className="w-full rounded-[18px] bg-lime-400/12 px-4 py-3 text-sm font-semibold text-lime-200 transition-colors hover:bg-lime-400/18">Comprar</button></div>
-              <div className="flex items-end"><button formAction={submitTradeCommand} name="trade_action" value="sell" className="w-full rounded-[18px] bg-red-400/12 px-4 py-3 text-sm font-semibold text-red-200 transition-colors hover:bg-red-400/18">Vender</button></div>
-              <div className="flex items-end"><button formAction={submitTradeCommand} name="trade_action" value="close" className="w-full rounded-[18px] border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-100 transition-colors hover:bg-white/10">Fechar posicao</button></div>
+              <div className="flex items-end"><button formAction={submitBuyCommand} className="w-full rounded-[18px] bg-lime-400/12 px-4 py-3 text-sm font-semibold text-lime-200 transition-colors hover:bg-lime-400/18">Comprar</button></div>
+              <div className="flex items-end"><button formAction={submitSellCommand} className="w-full rounded-[18px] bg-red-400/12 px-4 py-3 text-sm font-semibold text-red-200 transition-colors hover:bg-red-400/18">Vender</button></div>
+              <div className="flex items-end"><button formAction={submitCloseCommand} className="w-full rounded-[18px] border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-100 transition-colors hover:bg-white/10">Fechar posicao</button></div>
             </form>
             <div className="mt-4 rounded-[22px] border border-white/8 bg-white/4 p-4 text-sm text-slate-300">O envio manual agora aceita lote com virgula ou ponto. Se o comando falhar na VPS, o motivo mais recente aparece no bloco do canal operacional acima.</div>
           </section>

@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 import time
 from dataclasses import dataclass
@@ -266,9 +266,31 @@ def build_position_snapshot(position) -> PositionSnapshot:
     )
 
 
+def calculate_rsi(closes: List[float], period: int = 14) -> float | None:
+    if len(closes) <= period:
+        return None
+
+    deltas = [closes[index] - closes[index - 1] for index in range(1, len(closes))]
+    recent = deltas[-period:]
+    gains = [max(delta, 0.0) for delta in recent]
+    losses = [max(-delta, 0.0) for delta in recent]
+    average_gain = sum(gains) / period
+    average_loss = sum(losses) / period
+
+    if average_loss == 0:
+        return 100.0
+
+    rs = average_gain / average_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+
 def build_market_payload(symbol: str, timeframe_name: str) -> Dict[str, Any]:
     timeframe = TIMEFRAME_MAP.get(timeframe_name, mt5.TIMEFRAME_M5)
-    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, 40) or []
+    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, 40)
+    if rates is None:
+        rates = []
+
     candles = [
         {
             "time": utc_iso(int(rate["time"])),
@@ -280,22 +302,49 @@ def build_market_payload(symbol: str, timeframe_name: str) -> Dict[str, Any]:
         for rate in rates
     ]
 
+    closes = [candle["close"] for candle in candles]
+    highs = [candle["high"] for candle in candles]
+    lows = [candle["low"] for candle in candles]
+
+    moving_average_20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else None
+    rsi = calculate_rsi(closes, 14)
+    support = min(lows[-20:]) if len(lows) >= 20 else None
+    resistance = max(highs[-20:]) if len(highs) >= 20 else None
+
+    trend = None
+    if moving_average_20 is not None and len(closes) >= 2:
+        last_close = closes[-1]
+        previous_close = closes[-2]
+        if last_close > moving_average_20 and last_close >= previous_close:
+            trend = "uptrend"
+        elif last_close < moving_average_20 and last_close <= previous_close:
+            trend = "downtrend"
+        else:
+            trend = "range"
+
     tick = mt5.symbol_info_tick(symbol)
     symbol_info = mt5.symbol_info(symbol)
     notes = [f"Sync do mercado para {symbol} em {timeframe_name}."]
+    if trend:
+        notes.append(f"Tendencia detectada: {trend}.")
+    if rsi is not None:
+        notes.append(f"RSI 14: {rsi:.2f}.")
+    if moving_average_20 is not None:
+        notes.append(f"Media movel 20: {moving_average_20:.2f}.")
 
     return {
-        "trend": None,
-        "rsi": None,
-        "moving_average_20": None,
-        "support": None,
-        "resistance": None,
+        "trend": trend,
+        "rsi": round(rsi, 2) if rsi is not None else None,
+        "moving_average_20": round(moving_average_20, 2) if moving_average_20 is not None else None,
+        "support": round(support, 2) if support is not None else None,
+        "resistance": round(resistance, 2) if resistance is not None else None,
         "notes": notes,
         "candles": candles,
         "spread": float(symbol_info.spread) if symbol_info else None,
         "last_bid": float(tick.bid) if tick else None,
         "last_ask": float(tick.ask) if tick else None,
     }
+
 
 
 def send_event(payload: Dict[str, Any]) -> None:
@@ -385,7 +434,9 @@ def handle_closed_positions(account_config: Dict[str, Any], account_state: Dict[
     symbol = config.get("ativo") or "XAUUSD"
     timeframe = config.get("timeframe") or "M5"
     start_of_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    history = mt5.history_deals_get(start_of_day, datetime.now(timezone.utc)) or []
+    history = mt5.history_deals_get(start_of_day, datetime.now(timezone.utc))
+    if history is None:
+        history = []
     account = account_payload(symbol)
     market = build_market_payload(symbol, timeframe)
     recent_history_ids = set(account_state.get("recent_history_ids", []))
@@ -477,3 +528,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+

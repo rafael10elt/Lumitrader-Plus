@@ -1,4 +1,4 @@
-﻿export type MarketCandle = {
+export type MarketCandle = {
   time?: string;
   open: number;
   close: number;
@@ -56,6 +56,8 @@ export type TradingEventPayload = {
     moving_average_20?: number;
     support?: number;
     resistance?: number;
+    last_bid?: number;
+    last_ask?: number;
     notes?: string[];
     candles?: MarketCandle[];
   };

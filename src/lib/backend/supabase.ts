@@ -1,4 +1,4 @@
-﻿import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { ReportPayload, TradingEventPayload } from "@/lib/backend/types";
 
 export type LoadedContext = {
@@ -35,6 +35,7 @@ export type LoadedContext = {
   };
   config: {
     id: string;
+    sistema_ligado: boolean;
     modo: "agressivo" | "conservador";
     timeframe: string;
     breakeven_ativo: boolean;
@@ -134,7 +135,7 @@ export async function loadTradingContext(accountNumber: string): Promise<LoadedC
       .maybeSingle<LoadedContext["license"]>(),
     adminClient
       .from("configuracoes_sessao")
-      .select("id, modo, timeframe, breakeven_ativo, trailing_stop_ativo, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria, ativo")
+      .select("id, sistema_ligado, modo, timeframe, breakeven_ativo, trailing_stop_ativo, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria, ativo")
       .eq("conta_trading_id", account.id)
       .order("atualizado_em", { ascending: false })
       .limit(1)
@@ -215,16 +216,41 @@ export async function recordTradingEvent(context: LoadedContext, payload: Tradin
     return inserted?.id ?? null;
   }
 
-  const { data: latestOpen } = await adminClient
-    .from("operacoes")
-    .select("id")
-    .eq("conta_trading_id", context.account.id)
-    .eq("status", "aberta")
-    .order("aberta_em", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ id: string }>();
+  let latestOpen: { id: string; validacao_ia?: Record<string, unknown> | null } | null = null;
+
+  if (payload.operation.ticket) {
+    const { data: ticketMatchedOpen } = await adminClient
+      .from("operacoes")
+      .select("id, validacao_ia")
+      .eq("conta_trading_id", context.account.id)
+      .eq("status", "aberta")
+      .contains("validacao_ia", { ticket: payload.operation.ticket })
+      .order("aberta_em", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ id: string; validacao_ia?: Record<string, unknown> | null }>();
+
+    latestOpen = ticketMatchedOpen ?? null;
+  }
+
+  if (!latestOpen) {
+    const { data: symbolMatchedOpen } = await adminClient
+      .from("operacoes")
+      .select("id, validacao_ia")
+      .eq("conta_trading_id", context.account.id)
+      .eq("status", "aberta")
+      .eq("ativo", payload.operation.symbol)
+      .order("aberta_em", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ id: string; validacao_ia?: Record<string, unknown> | null }>();
+
+    latestOpen = symbolMatchedOpen ?? null;
+  }
 
   if (latestOpen?.id) {
+    const currentTelemetry = latestOpen.validacao_ia && typeof latestOpen.validacao_ia === "object"
+      ? latestOpen.validacao_ia
+      : {};
+
     await adminClient
       .from("operacoes")
       .update({
@@ -236,12 +262,16 @@ export async function recordTradingEvent(context: LoadedContext, payload: Tradin
         spread: payload.operation.spread ?? null,
         volume: payload.operation.volume ?? null,
         volatilidade: payload.operation.volatility ?? null,
+        validacao_ia: {
+          ...currentTelemetry,
+          ticket: payload.operation.ticket ?? currentTelemetry.ticket ?? null,
+          market: payload.market ?? currentTelemetry.market ?? null,
+        },
       })
       .eq("id", latestOpen.id);
 
     return latestOpen.id;
   }
-
   const { data: inserted } = await adminClient
     .from("operacoes")
     .insert({
@@ -351,3 +381,66 @@ export async function refreshDailyStats(context: LoadedContext, payload: Trading
     onConflict: "user_id,conta_trading_id,ativo,periodo",
   });
 }
+
+
+
+export async function loadAccountExecutionState(accountId: string) {
+  const adminClient = createAdminClient();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const [{ count: openPositions }, { count: pendingCommands }] = await Promise.all([
+    adminClient
+      .from("operacoes")
+      .select("id", { count: "exact", head: true })
+      .eq("conta_trading_id", accountId)
+      .eq("status", "aberta"),
+    adminClient
+      .from("comandos_trading")
+      .select("id", { count: "exact", head: true })
+      .eq("conta_trading_id", accountId)
+      .in("status", ["pending", "processing"])
+      .gte("solicitado_em", today.toISOString()),
+  ]);
+
+  return {
+    hasOpenPosition: (openPositions ?? 0) > 0,
+    hasPendingCommand: (pendingCommands ?? 0) > 0,
+  };
+}
+
+export async function enqueueAutoTradeCommand(
+  context: LoadedContext,
+  payload: TradingEventPayload,
+  signal: {
+    type: "open_buy" | "open_sell";
+    lot: number;
+    stopLoss: number;
+    takeProfit: number;
+    rationale: string;
+  },
+) {
+  const adminClient = createAdminClient();
+  const { error } = await adminClient.from("comandos_trading").insert({
+    user_id: context.user.id,
+    conta_trading_id: context.account.id,
+    ativo: payload.operation?.symbol ?? context.config?.ativo ?? "XAUUSD",
+    timeframe: payload.operation?.timeframe ?? context.config?.timeframe ?? "M5",
+    tipo: signal.type,
+    lote: signal.lot,
+    stop_loss: signal.stopLoss,
+    take_profit: signal.takeProfit,
+    payload: {
+      origem: "auto_signal",
+      rationale: signal.rationale,
+      market: payload.market ?? null,
+    },
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+
+

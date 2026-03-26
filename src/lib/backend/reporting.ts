@@ -1,22 +1,21 @@
-﻿import { toCsv, toHtml } from "@/lib/backend/formatters";
+import { toCsv, toHtml } from "@/lib/backend/formatters";
 import { sendReportToN8n } from "@/lib/backend/n8n";
 import { generateAiSummary } from "@/lib/backend/openai";
+import { evaluateAutoOpportunity } from "@/lib/backend/auto-trader";
 import { calculateRiskSnapshot } from "@/lib/backend/risk";
-import { attachOperationTelemetry, countOperationsToday, loadSyncContext, loadTradingContext, recordTradingEvent, refreshDailyStats, updateAccountSnapshot } from "@/lib/backend/supabase";
+import {
+  attachOperationTelemetry,
+  countOperationsToday,
+  enqueueAutoTradeCommand,
+  loadAccountExecutionState,
+  loadTradingContext,
+  recordTradingEvent,
+  refreshDailyStats,
+  updateAccountSnapshot,
+} from "@/lib/backend/supabase";
 import type { ReportPayload, TradingEventPayload } from "@/lib/backend/types";
 
 export async function processTradingEvent(payload: TradingEventPayload) {
-  if (payload.event === "account_sync") {
-    const syncContext = await loadSyncContext(payload.account.number);
-
-    if (!syncContext.user.acesso_ativo) {
-      throw new Error("Usuario bloqueado pelo SaaS.");
-    }
-
-    await updateAccountSnapshot(syncContext.account.id, payload);
-    return { synced: true, account: payload.account.number, mode: "fast_sync" };
-  }
-
   const context = await loadTradingContext(payload.account.number);
 
   if (!context.user.acesso_ativo) {
@@ -28,12 +27,29 @@ export async function processTradingEvent(payload: TradingEventPayload) {
     throw new Error("Licenca inativa, bloqueada ou expirada para esta conta MT5.");
   }
 
+  await updateAccountSnapshot(context.account.id, payload);
+
+  if (payload.event === "account_sync") {
+    const [operationsToday, executionState] = await Promise.all([
+      countOperationsToday(context.account.id),
+      loadAccountExecutionState(context.account.id),
+    ]);
+
+    const signal = evaluateAutoOpportunity(context, payload, operationsToday);
+
+    if (signal && !executionState.hasOpenPosition && !executionState.hasPendingCommand) {
+      await enqueueAutoTradeCommand(context, payload, signal);
+      return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: signal.type };
+    }
+
+    return { synced: true, account: payload.account.number, mode: "fast_sync" };
+  }
+
   if (!payload.operation) {
     throw new Error("Operacao obrigatoria para este evento.");
   }
 
   const operationPayload = payload.operation;
-  await updateAccountSnapshot(context.account.id, payload);
   const operationId = await recordTradingEvent(context, payload);
   await refreshDailyStats(context, payload);
   const operationsToday = await countOperationsToday(context.account.id);

@@ -1,4 +1,4 @@
-﻿"use server";
+"use server";
 
 import { revalidatePath } from "next/cache";
 import { requireAuthenticatedUser } from "@/lib/auth";
@@ -93,15 +93,16 @@ export async function toggleSystemState(formData: FormData) {
   return;
 }
 
-
-export async function submitTradeCommand(formData: FormData) {
+async function submitTradeCommandWithAction(
+  action: "buy" | "sell" | "close",
+  formData: FormData,
+) {
   const { profile } = await requireAuthenticatedUser();
   const adminClient = createAdminClient();
 
   const contaTradingId = textValue(formData, "conta_trading_id");
   const ativo = textValue(formData, "ativo") || profile.ativo_padrao;
   const timeframe = textValue(formData, "timeframe") || profile.timeframe_padrao;
-  const action = textValue(formData, "trade_action");
   const lote = numberValue(formData, "lote");
   const stopLoss = numberValue(formData, "stop_loss");
   const takeProfit = numberValue(formData, "take_profit");
@@ -136,4 +137,22 @@ export async function submitTradeCommand(formData: FormData) {
 
   revalidatePath("/dashboard");
   return;
+}
+
+export async function submitBuyCommand(formData: FormData) {
+  return submitTradeCommandWithAction("buy", formData);
+}
+
+export async function submitSellCommand(formData: FormData) {
+  return submitTradeCommandWithAction("sell", formData);
+}
+
+export async function submitCloseCommand(formData: FormData) {
+  return submitTradeCommandWithAction("close", formData);
+}
+
+export async function submitTradeCommand(formData: FormData) {
+  const action = textValue(formData, "trade_action");
+  const normalizedAction = action === "sell" ? "sell" : action === "close" ? "close" : "buy";
+  return submitTradeCommandWithAction(normalizedAction, formData);
 }
