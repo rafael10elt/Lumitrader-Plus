@@ -1,4 +1,4 @@
-﻿"use server";
+"use server";
 
 import { revalidatePath } from "next/cache";
 import { requireAuthenticatedUser } from "@/lib/auth";
@@ -47,6 +47,36 @@ async function upsertConfig(profileId: string, contaTradingId: string, configId:
   });
 }
 
+async function upsertRiskConfig(profileId: string, contaTradingId: string, ativo: string, timeframe: string, riscoPorOperacao: number) {
+  const adminClient = createAdminClient();
+
+  const { data: existingRiskConfig } = await adminClient
+    .from("ativos_config")
+    .select("id")
+    .eq("conta_trading_id", contaTradingId)
+    .eq("ativo", ativo)
+    .eq("timeframe", timeframe)
+    .order("atualizado_em", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+
+  if (existingRiskConfig?.id) {
+    await adminClient
+      .from("ativos_config")
+      .update({ risco_por_operacao: riscoPorOperacao })
+      .eq("id", existingRiskConfig.id);
+    return;
+  }
+
+  await adminClient.from("ativos_config").insert({
+    user_id: profileId,
+    conta_trading_id: contaTradingId,
+    ativo,
+    timeframe,
+    risco_por_operacao: riscoPorOperacao,
+  });
+}
+
 export async function saveTradingSettings(formData: FormData) {
   const { profile } = await requireAuthenticatedUser();
 
@@ -64,6 +94,8 @@ export async function saveTradingSettings(formData: FormData) {
   const trailingAtivo = textValue(formData, "trailing_stop_ativo") === "on";
   const limiteOperacoesAtivo = textValue(formData, "limite_operacoes_ativo") === "on";
   const limiteOperacoes = limiteOperacoesAtivo ? numberValue(formData, "limite_operacoes_diaria") : null;
+  const riscoPorOperacaoPercentual = numberValue(formData, "risco_por_operacao") ?? 1;
+  const riscoPorOperacao = Math.max(riscoPorOperacaoPercentual, 0) / 100;
 
   await upsertConfig(profile.id, contaTradingId, configId, {
     ativo,
@@ -79,6 +111,8 @@ export async function saveTradingSettings(formData: FormData) {
     limite_operacoes_ativo: limiteOperacoesAtivo,
     limite_operacoes_diaria: limiteOperacoes,
   });
+
+  await upsertRiskConfig(profile.id, contaTradingId, ativo, timeframe, riscoPorOperacao);
 
   revalidatePath("/dashboard");
   return;
@@ -184,7 +218,3 @@ export async function submitTradeCommand(formData: FormData) {
   const normalizedAction = action === "sell" ? "sell" : action === "close" ? "close" : "buy";
   return submitTradeCommandWithAction(normalizedAction, formData);
 }
-
-
-
-

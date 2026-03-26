@@ -1,4 +1,4 @@
-﻿import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { ReportPayload, TradingEventPayload } from "@/lib/backend/types";
 
 export type LoadedContext = {
@@ -44,6 +44,7 @@ export type LoadedContext = {
     perda_maxima_diaria: number;
     limite_operacoes_ativo: boolean;
     limite_operacoes_diaria: number | null;
+    risco_por_operacao: number;
     ativo: string;
   } | null;
 };
@@ -122,7 +123,7 @@ export async function loadTradingContext(accountNumber: string): Promise<LoadedC
     throw new Error("Conta MT5 nao encontrada.");
   }
 
-  const [{ data: user }, { data: license }, { data: config }] = await Promise.all([
+  const [{ data: user }, { data: license }, { data: config }, { data: riskConfigs }] = await Promise.all([
     adminClient
       .from("usuarios")
       .select("id, nome, email, telegram_id, acesso_ativo")
@@ -139,7 +140,13 @@ export async function loadTradingContext(accountNumber: string): Promise<LoadedC
       .eq("conta_trading_id", account.id)
       .order("atualizado_em", { ascending: false })
       .limit(1)
-      .maybeSingle<LoadedContext["config"]>(),
+      .maybeSingle<Omit<NonNullable<LoadedContext["config"]>, "risco_por_operacao">>(),
+    adminClient
+      .from("ativos_config")
+      .select("ativo, timeframe, risco_por_operacao, ativo_principal")
+      .eq("conta_trading_id", account.id)
+      .order("ativo_principal", { ascending: false })
+      .order("atualizado_em", { ascending: false }),
   ]);
 
   if (!user) {
@@ -150,7 +157,24 @@ export async function loadTradingContext(accountNumber: string): Promise<LoadedC
     throw new Error("Nenhuma licenca vinculada a esta conta.");
   }
 
-  return { user, account, license, config };
+  const normalizedRiskConfigs = (riskConfigs ?? []) as Array<{ ativo: string; timeframe: string; risco_por_operacao: number; ativo_principal: boolean }>;
+  const matchedRiskConfig = config
+    ? normalizedRiskConfigs.find((item) => item.ativo === config.ativo && item.timeframe === config.timeframe)
+      ?? normalizedRiskConfigs.find((item) => item.ativo === config.ativo)
+      ?? normalizedRiskConfigs[0]
+    : null;
+
+  return {
+    user,
+    account,
+    license,
+    config: config
+      ? {
+          ...config,
+          risco_por_operacao: Number(matchedRiskConfig?.risco_por_operacao ?? 0.01),
+        }
+      : null,
+  };
 }
 
 export async function updateAccountSnapshot(accountId: string, payload: TradingEventPayload, insightSummary?: string | null) {
@@ -170,7 +194,16 @@ export async function updateAccountSnapshot(accountId: string, payload: TradingE
       nivel_margem: payload.account.margin_level ?? undefined,
       alavancagem: payload.account.leverage ?? undefined,
       server_time: payload.account.server_time ?? null,
-      mercado_snapshot: payload.market ?? null,
+      mercado_snapshot: payload.market
+        ? {
+            ...payload.market,
+            open_positions_count: payload.account.open_positions_count ?? 0,
+            open_position_tickets: payload.account.open_position_tickets ?? [],
+          }
+        : {
+            open_positions_count: payload.account.open_positions_count ?? 0,
+            open_position_tickets: payload.account.open_position_tickets ?? [],
+          },
       insight_atual: insightSummary ?? undefined,
       ultima_sincronizacao: new Date().toISOString(),
       ativo: true,

@@ -51,6 +51,7 @@ export type TradingEventPayload = {
     daily_loss_limit?: number;
     operation_limit_enabled?: boolean;
     operation_limit?: number;
+    risk_per_operation?: number;
   };
   market?: {
     trend?: string;

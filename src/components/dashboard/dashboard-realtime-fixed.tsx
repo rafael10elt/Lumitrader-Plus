@@ -1,6 +1,6 @@
-﻿"use client";
+"use client";
 
-import { useEffect, useEffectEvent, useState, useTransition, type FormEvent } from "react";
+import { useEffect, useEffectEvent, useRef, useState, useTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import type { AppUser } from "@/lib/auth";
 import {
@@ -134,6 +134,8 @@ export function DashboardRealtimeFixed({
   const [liveCommandStatuses, setLiveCommandStatuses] = useState(commandStatuses);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toasts, setToasts] = useState<DashboardToast[]>([]);
+  const refreshInFlightRef = useRef(false);
+  const queuedRefreshRef = useRef(false);
 
   useEffect(() => {
     setLiveAccount(account);
@@ -158,83 +160,109 @@ export function DashboardRealtimeFixed({
   });
 
   const refreshSnapshot = useEffectEvent(async () => {
-    const [
-      { data: nextAccount },
-      { data: nextConfig },
-      { data: nextStats },
-      { data: nextOperations },
-      { data: nextCommands },
-    ] = await Promise.all([
-      supabase.from("contas_trading").select("id, user_id, nome_cliente, numero_conta, corretora, moeda_codigo, moeda_simbolo, saldo_atual, equity, margem_livre, nivel_margem, ativo, atualizado_em, server_time, mercado_snapshot, insight_atual, ultima_sincronizacao").eq("id", selectedAccountId).maybeSingle<DashboardAccount>(),
-      supabase.from("configuracoes_sessao").select("id, conta_trading_id, ativo, timeframe, sistema_ligado, modo, breakeven_ativo, trailing_stop_ativo, horario_inicio, horario_fim, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria").eq("conta_trading_id", selectedAccountId).order("atualizado_em", { ascending: false }).limit(1).maybeSingle<DashboardConfig>(),
-      supabase.from("estatisticas").select("conta_trading_id, operacoes_total, vitorias, derrotas, win_rate, lucro_total, prejuizo_total, drawdown, melhor_operacao, pior_operacao").eq("conta_trading_id", selectedAccountId).order("periodo", { ascending: false }).limit(1).maybeSingle<DashboardStats>(),
-      supabase.from("operacoes").select("id, direcao, status, lote, preco_entrada, preco_saida, stop_loss, take_profit, lucro_prejuizo, aberta_em, fechada_em, timeframe, ativo, validacao_ia").eq("conta_trading_id", selectedAccountId).order("aberta_em", { ascending: false }).limit(50),
-      supabase.from("comandos_trading").select("id, tipo, status, erro, solicitado_em, processado_em, payload").eq("conta_trading_id", selectedAccountId).order("solicitado_em", { ascending: false }).limit(5),
-    ]);
+    if (refreshInFlightRef.current) {
+      queuedRefreshRef.current = true;
+      return;
+    }
 
-    startTransition(() => {
-      if (nextAccount) {
-        setLiveAccount(nextAccount);
-        const snapshotNotes = Array.isArray(nextAccount.mercado_snapshot?.notes) ? nextAccount.mercado_snapshot.notes : [];
-        const snapshotCandles = Array.isArray(nextAccount.mercado_snapshot?.candles) ? nextAccount.mercado_snapshot.candles : [];
-        setLiveInsightBundle((current) => ({
-          summary: nextAccount.insight_atual ?? current.summary,
-          notes: snapshotNotes.length > 0 ? snapshotNotes : current.notes,
-          candles: snapshotCandles.length > 0 ? snapshotCandles : current.candles,
-        }));
-      }
+    refreshInFlightRef.current = true;
 
-      if (nextConfig) setLiveConfig(nextConfig);
-      if (nextStats) setLiveStats(nextStats);
+    try {
+      const [
+        { data: nextAccount },
+        { data: nextConfig },
+        { data: nextRiskConfigs },
+        { data: nextStats },
+        { data: nextOperations },
+        { data: nextCommands },
+      ] = await Promise.all([
+        supabase.from("contas_trading").select("id, user_id, nome_cliente, numero_conta, corretora, moeda_codigo, moeda_simbolo, saldo_atual, equity, margem_livre, nivel_margem, ativo, atualizado_em, server_time, mercado_snapshot, insight_atual, ultima_sincronizacao").eq("id", selectedAccountId).maybeSingle<DashboardAccount>(),
+        supabase.from("configuracoes_sessao").select("id, conta_trading_id, ativo, timeframe, sistema_ligado, modo, breakeven_ativo, trailing_stop_ativo, horario_inicio, horario_fim, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria").eq("conta_trading_id", selectedAccountId).order("atualizado_em", { ascending: false }).limit(1).maybeSingle<Omit<DashboardConfig, "risco_por_operacao">>(),
+        supabase.from("ativos_config").select("ativo, timeframe, risco_por_operacao, ativo_principal").eq("conta_trading_id", selectedAccountId).order("ativo_principal", { ascending: false }).order("atualizado_em", { ascending: false }),
+        supabase.from("estatisticas").select("conta_trading_id, operacoes_total, vitorias, derrotas, win_rate, lucro_total, prejuizo_total, drawdown, melhor_operacao, pior_operacao").eq("conta_trading_id", selectedAccountId).order("periodo", { ascending: false }).limit(1).maybeSingle<DashboardStats>(),
+        supabase.from("operacoes").select("id, direcao, status, lote, preco_entrada, preco_saida, stop_loss, take_profit, lucro_prejuizo, aberta_em, fechada_em, timeframe, ativo, validacao_ia").eq("conta_trading_id", selectedAccountId).order("aberta_em", { ascending: false }).limit(50),
+        supabase.from("comandos_trading").select("id, tipo, status, erro, solicitado_em, processado_em, payload").eq("conta_trading_id", selectedAccountId).order("solicitado_em", { ascending: false }).limit(5),
+      ]);
 
-      if (nextOperations) {
-        const nextOpenOperation = nextOperations.find((operation) => operation.status === "aberta" && !operation.fechada_em);
-        setLiveOpenOperation(
-          nextOpenOperation
-            ? {
-                id: nextOpenOperation.id,
-                ticket: typeof nextOpenOperation.validacao_ia?.ticket === "string" ? nextOpenOperation.validacao_ia.ticket : null,
-                direction: nextOpenOperation.direcao === "compra" ? "buy" : "sell",
-                lot: Number(nextOpenOperation.lote),
-                entryPrice: Number(nextOpenOperation.preco_entrada),
-                stopLoss: nextOpenOperation.stop_loss != null ? Number(nextOpenOperation.stop_loss) : null,
-                takeProfit: nextOpenOperation.take_profit != null ? Number(nextOpenOperation.take_profit) : null,
-                openedAt: nextOpenOperation.aberta_em,
-                timeframe: nextOpenOperation.timeframe,
-                symbol: nextOpenOperation.ativo,
-                profitLoss: Number(nextOpenOperation.lucro_prejuizo ?? 0),
-              }
-            : null,
-        );
-
-        const nextRows: Array<DashboardHistoryRow | null> = nextOperations.map((operation) => {
-          if (operation.status === "aberta") return null;
-          const resultValue = Number(operation.lucro_prejuizo ?? 0);
-          return {
-            id: operation.id,
-            time: new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(operation.fechada_em ?? operation.aberta_em)),
-            type: operation.direcao === "compra" ? "Compra" : "Venda",
-            lot: Number(operation.lote).toFixed(2),
-            entry: Number(operation.preco_entrada).toFixed(2),
-            result: `${resultValue >= 0 ? "+" : "-"}${Math.abs(resultValue).toFixed(2)}`,
-            resultTone: resultValue >= 0 ? "text-lime-400" : "text-red-400",
-          };
-        });
-
-        setLiveHistory(nextRows.filter((row): row is DashboardHistoryRow => row !== null));
-
-        const latestTelemetry = nextOperations.find((operation) => operation.validacao_ia);
-        if (latestTelemetry?.validacao_ia) {
+      startTransition(() => {
+        if (nextAccount) {
+          setLiveAccount(nextAccount);
+          const snapshotNotes = Array.isArray(nextAccount.mercado_snapshot?.notes) ? nextAccount.mercado_snapshot.notes : [];
+          const snapshotCandles = Array.isArray(nextAccount.mercado_snapshot?.candles) ? nextAccount.mercado_snapshot.candles : [];
           setLiveInsightBundle((current) => ({
-            summary: typeof latestTelemetry.validacao_ia.ai?.summary === "string" ? latestTelemetry.validacao_ia.ai.summary : current.summary,
-            notes: Array.isArray(latestTelemetry.validacao_ia.market?.notes) ? latestTelemetry.validacao_ia.market.notes : current.notes,
-            candles: Array.isArray(latestTelemetry.validacao_ia.market?.candles) ? latestTelemetry.validacao_ia.market.candles : current.candles,
+            summary: nextAccount.insight_atual ?? current.summary,
+            notes: snapshotNotes.length > 0 ? snapshotNotes : current.notes,
+            candles: snapshotCandles.length > 0 ? snapshotCandles : current.candles,
           }));
         }
-      }
 
-      if (nextCommands) setLiveCommandStatuses(nextCommands as DashboardCommandStatus[]);
-    });
+        if (nextConfig) {
+          const normalizedRiskConfigs = (nextRiskConfigs ?? []) as Array<{ ativo: string; timeframe: string; risco_por_operacao: number; ativo_principal: boolean }>;
+          const matchedRiskConfig = normalizedRiskConfigs.find((item) => item.ativo === nextConfig.ativo && item.timeframe === nextConfig.timeframe)
+            ?? normalizedRiskConfigs.find((item) => item.ativo === nextConfig.ativo)
+            ?? normalizedRiskConfigs[0];
+          setLiveConfig({
+            ...nextConfig,
+            risco_por_operacao: Number(matchedRiskConfig?.risco_por_operacao ?? liveConfig.risco_por_operacao ?? 0.01),
+          });
+        }
+        if (nextStats) setLiveStats(nextStats);
+
+        if (nextOperations) {
+          const nextOpenOperation = nextOperations.find((operation) => operation.status === "aberta" && !operation.fechada_em);
+          setLiveOpenOperation(
+            nextOpenOperation
+              ? {
+                  id: nextOpenOperation.id,
+                  ticket: typeof nextOpenOperation.validacao_ia?.ticket === "string" ? nextOpenOperation.validacao_ia.ticket : null,
+                  direction: nextOpenOperation.direcao === "compra" ? "buy" : "sell",
+                  lot: Number(nextOpenOperation.lote),
+                  entryPrice: Number(nextOpenOperation.preco_entrada),
+                  stopLoss: nextOpenOperation.stop_loss != null ? Number(nextOpenOperation.stop_loss) : null,
+                  takeProfit: nextOpenOperation.take_profit != null ? Number(nextOpenOperation.take_profit) : null,
+                  openedAt: nextOpenOperation.aberta_em,
+                  timeframe: nextOpenOperation.timeframe,
+                  symbol: nextOpenOperation.ativo,
+                  profitLoss: Number(nextOpenOperation.lucro_prejuizo ?? 0),
+                }
+              : null,
+          );
+
+          const nextRows: Array<DashboardHistoryRow | null> = nextOperations.map((operation) => {
+            if (operation.status === "aberta") return null;
+            const resultValue = Number(operation.lucro_prejuizo ?? 0);
+            return {
+              id: operation.id,
+              time: new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(operation.fechada_em ?? operation.aberta_em)),
+              type: operation.direcao === "compra" ? "Compra" : "Venda",
+              lot: Number(operation.lote).toFixed(2),
+              entry: Number(operation.preco_entrada).toFixed(2),
+              result: `${resultValue >= 0 ? "+" : "-"}${Math.abs(resultValue).toFixed(2)}`,
+              resultTone: resultValue >= 0 ? "text-lime-400" : "text-red-400",
+            };
+          });
+
+          setLiveHistory(nextRows.filter((row): row is DashboardHistoryRow => row !== null));
+
+          const latestTelemetry = nextOperations.find((operation) => operation.validacao_ia);
+          if (latestTelemetry?.validacao_ia) {
+            setLiveInsightBundle((current) => ({
+              summary: typeof latestTelemetry.validacao_ia.ai?.summary === "string" ? latestTelemetry.validacao_ia.ai.summary : current.summary,
+              notes: Array.isArray(latestTelemetry.validacao_ia.market?.notes) ? latestTelemetry.validacao_ia.market.notes : current.notes,
+              candles: Array.isArray(latestTelemetry.validacao_ia.market?.candles) ? latestTelemetry.validacao_ia.market.candles : current.candles,
+            }));
+          }
+        }
+
+        if (nextCommands) setLiveCommandStatuses(nextCommands as DashboardCommandStatus[]);
+      });
+    } finally {
+      refreshInFlightRef.current = false;
+      if (queuedRefreshRef.current) {
+        queuedRefreshRef.current = false;
+        void refreshSnapshot();
+      }
+    }
   });
 
   useEffect(() => {
@@ -275,12 +303,28 @@ export function DashboardRealtimeFixed({
   }, [refreshSnapshot, selectedAccountId, supabase]);
 
   useEffect(() => {
-    void refreshSnapshot();
-    const interval = window.setInterval(() => {
+    const requestRefresh = () => {
       void refreshSnapshot();
-    }, 4000);
+    };
 
-    return () => window.clearInterval(interval);
+    requestRefresh();
+
+    const interval = window.setInterval(requestRefresh, 2500);
+    const handleFocus = () => requestRefresh();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        requestRefresh();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [refreshSnapshot, selectedAccountId]);
 
   const runAction = useEffectEvent(async (action: (formData: FormData) => Promise<void>, formData: FormData, successTitle: string, successDetail?: string) => {
@@ -397,11 +441,23 @@ export function DashboardRealtimeFixed({
     moving_average_20?: number | null;
     support?: number | null;
     resistance?: number | null;
+    open_positions_count?: number | null;
+    open_position_tickets?: string[];
   };
+
+  const openPositionTickets = Array.isArray(marketSnapshot.open_position_tickets)
+    ? marketSnapshot.open_position_tickets.filter((ticket): ticket is string => typeof ticket === "string" && ticket.length > 0)
+    : [];
+  const syncedOpenPositionsCount = typeof marketSnapshot.open_positions_count === "number"
+    ? marketSnapshot.open_positions_count
+    : openPositionTickets.length;
+  const fallbackOpenTicket = liveOpenOperation?.ticket ?? (openPositionTickets.length === 1 ? openPositionTickets[0] : null);
+  const hasDetectedOpenPosition = Boolean(liveOpenOperation) || syncedOpenPositionsCount > 0 || openPositionTickets.length > 0;
+  const canManageOpenPosition = Boolean(fallbackOpenTicket) && !isSubmitting;
 
   return (
     <>
-      <div className="mt-3 grid gap-3">
+      <div className="mt-3 grid min-w-0 gap-3">
         <section className="glass-panel rounded-[24px] p-3">
           <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
             <div className="grid flex-1 gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(280px,1.3fr)_repeat(7,minmax(0,0.78fr))]">
@@ -431,8 +487,8 @@ export function DashboardRealtimeFixed({
           </div>
         </section>
 
-        <div className="grid gap-3 xl:grid-cols-12">
-          <section className="glass-panel flex h-full flex-col overflow-hidden rounded-[24px] p-3.5 xl:col-span-8">
+        <div className="grid min-w-0 gap-3 xl:grid-cols-12">
+          <section className="glass-panel flex min-w-0 h-full flex-col overflow-hidden rounded-[24px] p-3.5 xl:col-span-8">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
                 <PanelEyebrow>Grafico em Tempo Real</PanelEyebrow>
@@ -447,7 +503,7 @@ export function DashboardRealtimeFixed({
             <TradingViewChart initialSymbol={liveConfig.ativo} initialTimeframe={liveConfig.timeframe} />
           </section>
 
-          <section className="glass-panel rounded-[24px] p-3.5 xl:col-span-4">
+          <section className="glass-panel min-w-0 rounded-[24px] p-3.5 xl:col-span-4">
             <div className="grid gap-3">
               <div className="rounded-[18px] border border-white/8 bg-slate-950/35 p-3.5">
                 <div className="flex items-start justify-between gap-3">
@@ -508,14 +564,14 @@ export function DashboardRealtimeFixed({
             </div>
           </section>
 
-          <section className="glass-panel rounded-[24px] p-3 xl:col-span-8">
+          <section className="glass-panel min-w-0 rounded-[24px] p-3 xl:col-span-8">
             <div className="grid gap-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <PanelEyebrow>Operacao Atual</PanelEyebrow>
-                  <h2 className="mt-1 break-words text-[1.15rem] font-semibold leading-tight sm:text-[1.28rem]">{liveOpenOperation ? `${liveOpenOperation.direction === "buy" ? "Compra" : "Venda"} ${liveOpenOperation.symbol}` : "Nenhuma operacao aberta"}</h2>
+                  <h2 className="mt-1 break-words text-[1.15rem] font-semibold leading-tight sm:text-[1.28rem]">{liveOpenOperation ? `${liveOpenOperation.direction === "buy" ? "Compra" : "Venda"} ${liveOpenOperation.symbol}` : hasDetectedOpenPosition ? "Posicao detectada no MT5" : "Nenhuma operacao aberta"}</h2>
                 </div>
-                {liveOpenOperation ? <span className="rounded-full bg-white/6 px-3 py-1 text-sm text-slate-200">Ticket {liveOpenOperation.ticket ?? "--"}</span> : null}
+                {fallbackOpenTicket ? <span className="rounded-full bg-white/6 px-3 py-1 text-sm text-slate-200">Ticket {fallbackOpenTicket}</span> : null}
               </div>
 
               {liveOpenOperation ? (
@@ -530,19 +586,21 @@ export function DashboardRealtimeFixed({
                   </div>
                   <div className="rounded-[16px] border border-white/8 bg-white/4 px-3.5 py-3 text-sm text-slate-300">{liveInsightBundle.summary ?? liveInsightBundle.notes[0] ?? "Sem resumo operacional recente para esta conta."}</div>
                 </>
+              ) : hasDetectedOpenPosition ? (
+                <div className="rounded-[18px] border border-cyan-400/20 bg-cyan-400/8 p-4 text-sm text-cyan-100">Existe uma posicao aberta detectada via sincronizacao do MT5. Os detalhes completos ainda estao sendo reconciliados, mas os comandos de parcial e fechamento ja podem ser usados.</div>
               ) : (
                 <div className="rounded-[18px] border border-white/8 bg-white/4 p-4 text-sm text-slate-400">Assim que houver uma posicao aberta, este bloco consolida direcao, lote, entrada, P/L e niveis de saida sem deslocar a leitura do grafico.</div>
               )}
             </div>
           </section>
 
-          <section className="glass-panel rounded-[24px] p-3.5 xl:col-span-4 xl:row-span-2">
+          <section className="glass-panel min-w-0 rounded-[24px] p-3.5 xl:col-span-4 xl:row-span-2">
             <PanelEyebrow>Execucao e Parametros</PanelEyebrow>
             <form key={`manual-${selectedAccountId}-${liveOpenOperation?.id ?? "idle"}`} onSubmit={handleManualSubmit} className="mt-3 grid gap-3 rounded-[18px] border border-white/8 bg-white/4 p-3.5">
               <input type="hidden" name="conta_trading_id" value={selectedAccountId} />
               <input type="hidden" name="ativo" value={liveConfig.ativo} />
               <input type="hidden" name="timeframe" value={liveConfig.timeframe} />
-              <input type="hidden" name="ticket_referencia" value={liveOpenOperation?.ticket ?? ""} />
+              <input type="hidden" name="ticket_referencia" value={fallbackOpenTicket ?? ""} />
               <SettingsField label="Lote" name="lote" type="text" inputMode="decimal" defaultValue={liveOpenOperation ? liveOpenOperation.lot.toFixed(2).replace(".", ",") : "0,10"} compact />
               <div className="grid gap-3 sm:grid-cols-2">
                 <SettingsField label="Stop Loss" name="stop_loss" type="text" inputMode="decimal" defaultValue={liveOpenOperation?.stopLoss != null ? String(liveOpenOperation.stopLoss).replace(".", ",") : ""} compact />
@@ -551,8 +609,8 @@ export function DashboardRealtimeFixed({
               <div className="grid gap-2 sm:grid-cols-2">
                 <ActionButton label="Comprar" tone="buy" dataAction="buy" disabled={isSubmitting} />
                 <ActionButton label="Vender" tone="sell" dataAction="sell" disabled={isSubmitting} />
-                <ActionButton label="Parcial 50%" tone="neutral" dataAction="partial" disabled={!liveOpenOperation || isSubmitting} />
-                <ActionButton label="Fechar posicao" tone="neutral" dataAction="close" disabled={!liveOpenOperation || isSubmitting} />
+                <ActionButton label="Parcial 50%" tone="neutral" dataAction="partial" disabled={!canManageOpenPosition} />
+                <ActionButton label="Fechar posicao" tone="neutral" dataAction="close" disabled={!canManageOpenPosition} />
               </div>
             </form>
 
@@ -580,6 +638,7 @@ export function DashboardRealtimeFixed({
                 <SettingsField label="Meta diaria" name="meta_lucro_diaria" type="text" inputMode="decimal" defaultValue={String(liveConfig.meta_lucro_diaria)} compact />
                 <SettingsField label="Perda maxima" name="perda_maxima_diaria" type="text" inputMode="decimal" defaultValue={String(liveConfig.perda_maxima_diaria)} compact />
                 <SettingsField label="Limite operacoes" name="limite_operacoes_diaria" type="text" inputMode="numeric" defaultValue={String(liveConfig.limite_operacoes_diaria ?? "")} compact />
+                <SettingsField label="Risco por operacao (%)" name="risco_por_operacao" type="text" inputMode="decimal" defaultValue={String((liveConfig.risco_por_operacao ?? 0.01) * 100).replace(".", ",")} compact />
               </div>
               <div className="grid gap-2 rounded-[16px] border border-white/8 bg-slate-950/35 p-3">
                 <CheckBox label="Breakeven ativo" name="breakeven_ativo" defaultChecked={liveConfig.breakeven_ativo} />
@@ -590,7 +649,7 @@ export function DashboardRealtimeFixed({
             </form>
           </section>
 
-          <section className="glass-panel rounded-[24px] p-3.5 xl:col-span-5">
+          <section className="glass-panel min-w-0 rounded-[24px] p-3.5 xl:col-span-5">
             <PanelEyebrow>Estatisticas da Conta</PanelEyebrow>
             <div className="mt-3 grid gap-2">
               {metrics.map((item) => <InlineMetric key={item.label} label={item.label} value={item.value} tone={item.tone} />)}
@@ -604,7 +663,7 @@ export function DashboardRealtimeFixed({
             </div>
           </section>
 
-          <section className="glass-panel rounded-[24px] p-3.5 xl:col-span-7">
+          <section className="glass-panel min-w-0 rounded-[24px] p-3.5 xl:col-span-7">
             <PanelEyebrow>Monitor da Conta</PanelEyebrow>
             <div className="mt-3 grid gap-3 xl:grid-cols-[0.95fr_1.05fr]">
               <div className="grid gap-2 rounded-[18px] border border-white/8 bg-slate-950/35 p-3.5">
@@ -615,6 +674,7 @@ export function DashboardRealtimeFixed({
                 <DataRow label="Meta diaria" value={formatAccountCurrency(liveConfig.meta_lucro_diaria, liveAccount)} compact />
                 <DataRow label="Perda maxima" value={formatAccountCurrency(liveConfig.perda_maxima_diaria, liveAccount)} compact />
                 <DataRow label="Limite operacoes" value={liveConfig.limite_operacoes_ativo ? String(liveConfig.limite_operacoes_diaria ?? 0) : "Desativado"} compact />
+                <DataRow label="Risco por operacao" value={`${((liveConfig.risco_por_operacao ?? 0.01) * 100).toFixed(2)}%`} compact />
               </div>
               <div className="grid gap-2">
                 {(liveInsightBundle.notes.length > 0 ? liveInsightBundle.notes.slice(0, 6) : ["Sem observacoes adicionais no momento."]).map((item) => (
@@ -624,7 +684,7 @@ export function DashboardRealtimeFixed({
             </div>
           </section>
 
-          <section className="glass-panel rounded-[24px] p-3.5 xl:col-span-12">
+          <section className="glass-panel min-w-0 rounded-[24px] p-3.5 xl:col-span-12">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <PanelEyebrow>Timeline Operacional</PanelEyebrow>

@@ -26,7 +26,7 @@ EVENTS_URL = os.getenv("LUMITRADER_BACKEND_URL", "http://localhost:3000/api/back
 BRIDGE_ACCOUNTS_URL = EVENTS_URL.replace("/trading/events", "/bridge/accounts")
 BRIDGE_COMMANDS_URL = EVENTS_URL.replace("/trading/events", "/bridge/commands")
 INGEST_TOKEN = os.getenv("LUMITRADER_INGEST_TOKEN", "")
-POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "3"))
+POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "2"))
 STATE_PATH = Path(__file__).with_name("state.json")
 
 TIMEFRAME_MAP = {

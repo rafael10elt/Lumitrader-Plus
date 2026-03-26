@@ -45,7 +45,7 @@ export function TradingViewChart({ initialSymbol = "XAUUSD", initialTimeframe = 
   const [isCompact, setIsCompact] = useState(false);
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia("(max-width: 767px)");
+    const mediaQuery = window.matchMedia("(max-width: 1023px)");
     const syncViewport = () => setIsCompact(mediaQuery.matches);
 
     syncViewport();
@@ -111,6 +111,6 @@ export function TradingViewChart({ initialSymbol = "XAUUSD", initialTimeframe = 
     };
   }, [containerId, initialSymbol, initialTimeframe, isCompact]);
 
-  return <div ref={containerRef} className="mt-3 h-[390px] min-w-0 flex-1 overflow-hidden rounded-[28px] border border-white/8 bg-slate-950/60 sm:h-[470px] xl:min-h-[560px]" />;
+  return <div ref={containerRef} className="mt-3 h-[390px] w-full min-w-0 max-w-full flex-1 overflow-hidden rounded-[28px] border border-white/8 bg-slate-950/60 sm:h-[470px] xl:min-h-[560px]" />;
 }
 

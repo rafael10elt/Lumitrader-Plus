@@ -1,4 +1,4 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,7 +29,8 @@ export async function GET(request: Request) {
       ativo,
       usuarios!inner(id, acesso_ativo),
       licencas!inner(status, data_expiracao),
-      configuracoes_sessao!inner(id, ativo, timeframe, modo, sistema_ligado, breakeven_ativo, trailing_stop_ativo, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria)
+      configuracoes_sessao!inner(id, ativo, timeframe, modo, sistema_ligado, breakeven_ativo, trailing_stop_ativo, meta_lucro_diaria, perda_maxima_diaria, limite_operacoes_ativo, limite_operacoes_diaria),
+      ativos_config(ativo, timeframe, risco_por_operacao, ativo_principal)
     `)
     .eq("usuarios.acesso_ativo", true)
     .eq("licencas.status", "ativa")
@@ -42,13 +43,28 @@ export async function GET(request: Request) {
 
   const accounts = (data ?? [])
     .filter((item) => item.servidor && item.mt5_password)
-    .map((item) => ({
-      id: item.id,
-      number: item.numero_conta,
-      server: item.servidor,
-      password: item.mt5_password,
-      config: Array.isArray(item.configuracoes_sessao) ? item.configuracoes_sessao[0] : item.configuracoes_sessao,
-    }));
+    .map((item) => {
+      const config = Array.isArray(item.configuracoes_sessao) ? item.configuracoes_sessao[0] : item.configuracoes_sessao;
+      const riskConfigs = Array.isArray(item.ativos_config) ? item.ativos_config : [];
+      const matchedRisk = config
+        ? riskConfigs.find((risk) => risk.ativo === config.ativo && risk.timeframe === config.timeframe)
+          ?? riskConfigs.find((risk) => risk.ativo === config.ativo)
+          ?? riskConfigs[0]
+        : null;
+
+      return {
+        id: item.id,
+        number: item.numero_conta,
+        server: item.servidor,
+        password: item.mt5_password,
+        config: config
+          ? {
+              ...config,
+              risco_por_operacao: Number(matchedRisk?.risco_por_operacao ?? 0.01),
+            }
+          : null,
+      };
+    });
 
   return NextResponse.json({ ok: true, accounts });
 }

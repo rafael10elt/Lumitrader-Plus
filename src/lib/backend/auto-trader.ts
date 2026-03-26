@@ -1,7 +1,5 @@
-﻿import type { LoadedContext } from "@/lib/backend/supabase";
+import type { LoadedContext } from "@/lib/backend/supabase";
 import type { TradingEventPayload } from "@/lib/backend/types";
-
-const BASE_AUTO_LOT = 0.1;
 
 type AutoSignal = {
   type: "open_buy" | "open_sell";
@@ -11,14 +9,47 @@ type AutoSignal = {
   rationale: string;
 };
 
+const LOT_STEP = 0.01;
+const MIN_AUTO_LOT = 0.01;
+const PRICE_VALUE_PER_LOT = 100;
+
 function roundPrice(value: number) {
   return Number(value.toFixed(2));
+}
+
+function roundLot(value: number) {
+  return Number((Math.floor(value / LOT_STEP) * LOT_STEP).toFixed(2));
 }
 
 function computeRiskDistance(entry: number, fallback: number | null | undefined) {
   const structuralDistance = fallback != null ? Math.abs(entry - fallback) : 0;
   const minimumDistance = Math.max(entry * 0.001, 2);
   return Math.max(structuralDistance, minimumDistance);
+}
+
+function computeDynamicLot(args: {
+  balance: number;
+  equity: number;
+  dailyLossLimit: number;
+  riskPercent: number;
+  stopDistance: number;
+}) {
+  const safeBalance = Math.max(args.balance, 0);
+  const floatingLoss = Math.max(safeBalance - Math.max(args.equity, 0), 0);
+  const configuredRisk = args.riskPercent > 0 ? args.riskPercent : 0.01;
+  const baseRiskBudget = safeBalance * configuredRisk;
+  const remainingDailyLoss = args.dailyLossLimit > 0
+    ? Math.max(args.dailyLossLimit - floatingLoss, 0)
+    : baseRiskBudget;
+  const allowedRisk = Math.min(baseRiskBudget, remainingDailyLoss);
+
+  if (allowedRisk <= 0 || args.stopDistance <= 0) {
+    return null;
+  }
+
+  const rawLot = allowedRisk / (args.stopDistance * PRICE_VALUE_PER_LOT);
+  const roundedLot = roundLot(rawLot);
+  return roundedLot >= MIN_AUTO_LOT ? roundedLot : null;
 }
 
 export function evaluateAutoOpportunity(
@@ -63,14 +94,21 @@ export function evaluateAutoOpportunity(
     const riskDistance = computeRiskDistance(entry, support);
     const stopLoss = roundPrice(support != null && support < entry ? support : entry - riskDistance);
     const takeProfit = roundPrice(resistance != null && resistance > entry ? resistance : entry + riskDistance * 2);
+    const lot = computeDynamicLot({
+      balance: payload.account.balance ?? 0,
+      equity: payload.account.equity ?? payload.account.balance ?? 0,
+      dailyLossLimit: context.config.perda_maxima_diaria,
+      riskPercent: context.config.risco_por_operacao,
+      stopDistance: Math.abs(entry - stopLoss),
+    });
 
-    if (stopLoss < entry && takeProfit > entry) {
+    if (lot != null && stopLoss < entry && takeProfit > entry) {
       return {
         type: "open_buy",
-        lot: BASE_AUTO_LOT,
+        lot,
         stopLoss,
         takeProfit,
-        rationale: `Signal uptrend RSI ${rsi.toFixed(1)} above MA20`,
+        rationale: `Signal uptrend RSI ${rsi.toFixed(1)} above MA20 | risk ${(context.config.risco_por_operacao * 100).toFixed(2)}% | lot ${lot.toFixed(2)}`,
       };
     }
   }
@@ -80,18 +118,24 @@ export function evaluateAutoOpportunity(
     const riskDistance = computeRiskDistance(entry, resistance);
     const stopLoss = roundPrice(resistance != null && resistance > entry ? resistance : entry + riskDistance);
     const takeProfit = roundPrice(support != null && support < entry ? support : entry - riskDistance * 2);
+    const lot = computeDynamicLot({
+      balance: payload.account.balance ?? 0,
+      equity: payload.account.equity ?? payload.account.balance ?? 0,
+      dailyLossLimit: context.config.perda_maxima_diaria,
+      riskPercent: context.config.risco_por_operacao,
+      stopDistance: Math.abs(stopLoss - entry),
+    });
 
-    if (stopLoss > entry && takeProfit < entry) {
+    if (lot != null && stopLoss > entry && takeProfit < entry) {
       return {
         type: "open_sell",
-        lot: BASE_AUTO_LOT,
+        lot,
         stopLoss,
         takeProfit,
-        rationale: `Signal downtrend RSI ${rsi.toFixed(1)} below MA20`,
+        rationale: `Signal downtrend RSI ${rsi.toFixed(1)} below MA20 | risk ${(context.config.risco_por_operacao * 100).toFixed(2)}% | lot ${lot.toFixed(2)}`,
       };
     }
   }
 
   return null;
 }
-

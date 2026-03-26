@@ -1,4 +1,4 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { signout } from "@/app/login/actions";
 import { DashboardRealtimeFixed } from "@/components/dashboard/dashboard-realtime-fixed";
@@ -44,6 +44,8 @@ export type DashboardAccount = {
   mercado_snapshot: {
     notes?: string[];
     candles?: MarketCandle[];
+    open_positions_count?: number;
+    open_position_tickets?: string[];
   } | null;
   insight_atual: string | null;
   ultima_sincronizacao: string | null;
@@ -64,6 +66,7 @@ export type DashboardConfig = {
   perda_maxima_diaria: number;
   limite_operacoes_ativo: boolean;
   limite_operacoes_diaria: number | null;
+  risco_por_operacao: number;
 };
 
 export type DashboardStats = {
@@ -207,7 +210,15 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     .eq("conta_trading_id", selectedAccount.id)
     .order("atualizado_em", { ascending: false })
     .limit(1)
-    .maybeSingle<DashboardConfig>();
+    .maybeSingle<Omit<DashboardConfig, "risco_por_operacao">>();
+
+  const riskConfigQuery = supabase
+    .from("ativos_config")
+    .select("ativo, timeframe, risco_por_operacao, ativo_principal")
+    .eq("user_id", profile.id)
+    .eq("conta_trading_id", selectedAccount.id)
+    .order("ativo_principal", { ascending: false })
+    .order("atualizado_em", { ascending: false });
 
   const statsQuery = supabase
     .from("estatisticas")
@@ -264,9 +275,19 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     operationsQuery = operationsQuery.lt("lucro_prejuizo", 0);
   }
 
-  const [{ data: config }, { data: stats }, { data: operations }, { data: openOperation }, { data: commandStatuses }] = await Promise.all([configQuery, statsQuery, operationsQuery, openOperationQuery, commandStatusQuery]);
+  const [{ data: config }, { data: riskConfigs }, { data: stats }, { data: operations }, { data: openOperation }, { data: commandStatuses }] = await Promise.all([configQuery, riskConfigQuery, statsQuery, operationsQuery, openOperationQuery, commandStatusQuery]);
 
-  const resolvedConfig: DashboardConfig = config ?? {
+  const normalizedRiskConfigs = (riskConfigs ?? []) as Array<{ ativo: string; timeframe: string; risco_por_operacao: number; ativo_principal: boolean }>;
+  const matchedRiskConfig = config
+    ? normalizedRiskConfigs.find((item) => item.ativo === config.ativo && item.timeframe === config.timeframe)
+      ?? normalizedRiskConfigs.find((item) => item.ativo === config.ativo)
+      ?? normalizedRiskConfigs[0]
+    : normalizedRiskConfigs[0];
+
+  const resolvedConfig: DashboardConfig = config ? {
+    ...config,
+    risco_por_operacao: Number(matchedRiskConfig?.risco_por_operacao ?? 0.01),
+  } : {
     conta_trading_id: selectedAccount.id,
     ativo: profile.ativo_padrao,
     timeframe: profile.timeframe_padrao,
@@ -280,6 +301,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     perda_maxima_diaria: 500,
     limite_operacoes_ativo: false,
     limite_operacoes_diaria: null,
+    risco_por_operacao: Number(matchedRiskConfig?.risco_por_operacao ?? 0.01),
   };
 
   const resolvedStats: DashboardStats = stats ?? {
