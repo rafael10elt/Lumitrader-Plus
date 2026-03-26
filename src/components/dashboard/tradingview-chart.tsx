@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 declare global {
   interface Window {
@@ -42,6 +42,19 @@ export function TradingViewChart({ initialSymbol = "XAUUSD", initialTimeframe = 
   const id = useId().replace(/:/g, "");
   const containerId = `tv-chart-${id}`;
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const [isCompact, setIsCompact] = useState(false);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 767px)");
+    const syncViewport = () => setIsCompact(mediaQuery.matches);
+
+    syncViewport();
+    mediaQuery.addEventListener("change", syncViewport);
+
+    return () => {
+      mediaQuery.removeEventListener("change", syncViewport);
+    };
+  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -62,10 +75,10 @@ export function TradingViewChart({ initialSymbol = "XAUUSD", initialTimeframe = 
         style: "1",
         locale: "br",
         enable_publishing: false,
-        allow_symbol_change: true,
-        withdateranges: true,
-        hide_side_toolbar: false,
-        details: true,
+        allow_symbol_change: !isCompact,
+        withdateranges: !isCompact,
+        hide_side_toolbar: isCompact,
+        details: !isCompact,
         hotlist: false,
         calendar: false,
         save_image: false,
@@ -74,7 +87,7 @@ export function TradingViewChart({ initialSymbol = "XAUUSD", initialTimeframe = 
       });
     };
 
-    const existingScript = document.querySelector<HTMLScriptElement>('script[data-tradingview-widget="tvjs"]');
+    const existingScript = document.querySelector<HTMLScriptElement>("script[data-tradingview-widget=\"tvjs\"]");
     if (existingScript) {
       if ((window.TradingView as { widget?: unknown } | undefined)?.widget) {
         renderWidget();
@@ -96,7 +109,7 @@ export function TradingViewChart({ initialSymbol = "XAUUSD", initialTimeframe = 
         container.innerHTML = "";
       }
     };
-  }, [containerId, initialSymbol, initialTimeframe]);
+  }, [containerId, initialSymbol, initialTimeframe, isCompact]);
 
-  return <div ref={containerRef} className="mt-5 h-[520px] overflow-hidden rounded-[28px] border border-white/8 bg-slate-950/60" />;
+  return <div ref={containerRef} className="mt-5 h-[360px] min-w-0 overflow-hidden rounded-[28px] border border-white/8 bg-slate-950/60 sm:h-[420px] xl:h-[520px]" />;
 }
