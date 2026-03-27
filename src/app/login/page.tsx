@@ -49,43 +49,41 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
                 Acesso protegido
               </p>
               <h2 className="mt-3 text-4xl font-semibold leading-tight sm:text-5xl">
-                Controle algoritmico com autenticacao real e painel em tempo real.
+                Painel operacional com autenticação real, bridge MT5 e validação por IA.
               </h2>
               <p className="mt-5 max-w-xl text-base leading-7 text-slate-300">
-                Esta etapa ja deixa o Lumitrader pronto para proteger usuarios, persistir
-                sessao no App Router e preparar o fluxo vivo de conta MT5, operacoes,
-                saldo e equity.
+                O login protege o acesso ao dashboard, mantém sessão SSR com Supabase e libera o fluxo operacional da conta licenciada vinculada ao usuário.
               </p>
             </div>
 
             <div className="mt-10 grid gap-4 sm:grid-cols-3">
               <FeatureCard
                 title="Auth SSR"
-                description="Cookies seguros e paginas protegidas com Supabase no Next.js."
+                description="Sessão segura com Supabase, cookies protegidos e páginas fechadas por usuário autenticado."
               />
               <FeatureCard
-                title="Conta MT5"
-                description="Painel preparado para numero da conta, cliente, saldo e equity."
+                title="Painel Vivo"
+                description="Dashboard ligado a conta MT5, comandos operacionais, estatísticas e leitura de mercado."
               />
               <FeatureCard
-                title="Realtime"
-                description="Estrutura pronta para assinaturas ao vivo de conta e operacoes."
+                title="IA Assistida"
+                description="Automação com travas de risco, validação contextual por IA e sincronização em tempo real."
               />
             </div>
 
             <div className="mt-8 rounded-[28px] border border-white/8 bg-slate-950/35 p-5">
               <p className="font-mono text-xs uppercase tracking-[0.28em] text-cyan-200/70">
-                Proxima camada
+                Capacidades atuais
               </p>
               <ul className="mt-4 grid gap-3 text-sm text-slate-200">
                 <li className="rounded-[20px] border border-white/8 bg-white/4 px-4 py-3">
-                  Webhooks MT5 -&gt; Python -&gt; n8n -&gt; Supabase.
+                  Bridge MT5 com sincronização de saldo, equity, posições e comandos.
                 </li>
                 <li className="rounded-[20px] border border-white/8 bg-white/4 px-4 py-3">
-                  Candles estilo MT5 com atualizacao em tempo real.
+                  Dashboard com polling de segurança e atualização via Supabase Realtime.
                 </li>
                 <li className="rounded-[20px] border border-white/8 bg-white/4 px-4 py-3">
-                  Auditoria operacional com logs e validacao por IA sob demanda.
+                  Regras de risco, posição única por conta e validação operacional por IA.
                 </li>
               </ul>
             </div>
@@ -149,12 +147,10 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           </div>
 
           <p className="mt-6 text-sm leading-6 text-slate-400">
-            Quando o cadastro for confirmado por email, o dashboard passa a carregar os
-            dados do usuario autenticado e a conta de trading vinculada.
+            Após confirmar o email, o usuário autenticado passa a acessar apenas o dashboard e os recursos permitidos pelo vínculo com sua conta e licença.
           </p>
           <p className="mt-3 text-sm text-slate-500">
-            Deploy previsto para Netlify. Depois dessa etapa, seguimos para os webhooks
-            operacionais e realtime.
+            O acesso operacional também depende do cadastro da conta MT5, licença ativa e parâmetros configurados no ambiente administrativo.
           </p>
           <div className="mt-6 text-sm text-slate-400">
             Se precisar voltar para o inicio, use <Link href="/" className="text-lime-300">/</Link>.

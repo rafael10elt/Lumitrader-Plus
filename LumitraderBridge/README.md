@@ -1,55 +1,56 @@
-# LumitraderBridge
+﻿# LumitraderBridge
 
-Pacote standalone para rodar o bridge MT5 em uma VPS Windows sem depender de PowerShell.
+Pacote standalone para rodar o bridge MT5 em VPS Windows.
+
+## Modelo operacional correto
+
+- uma pasta `LumitraderBridge-X` por conta MT5
+- um `terminal64.exe` por instância
+- um `.env` por bridge
+- um `ACCOUNT_NUMBER` por bridge
 
 ## Arquivos
 
-- `mt5_reporter.py`: bridge principal.
-- `requirements.txt`: dependencias Python.
-- `.env.example`: modelo de configuracao.
-- `run_mt5_reporter.bat`: executa o bridge e grava logs.
-- `start_mt5_reporter_hidden.vbs`: inicia o bridge sem abrir janela.
-- `install_startup.bat`: instala o autostart na pasta Startup do Windows.
-- `logs/`: pasta para os arquivos de log.
+- `mt5_reporter.py`: bridge principal
+- `requirements.txt`: dependências Python
+- `run_mt5_reporter.bat`: execução com logs
+- `start_mt5_reporter_hidden.vbs`: inicialização oculta
+- `install_startup.bat`: auto start após login do Windows
+- `logs/`: saída operacional
 
-## Instalacao
+## Instalação
 
-1. Instale o Python para Windows e marque `Add Python to PATH`.
-2. Copie esta pasta inteira para a VPS.
-3. No `cmd`, entre na pasta e rode:
+1. Instale Python.
+2. Copie a pasta para a VPS.
+3. Instale dependências:
 
 ```bat
 python -m pip install -r requirements.txt
 ```
 
-4. Copie `.env.example` para `.env` e preencha:
+4. Crie `.env` com este formato:
 
 ```env
 LUMITRADER_BACKEND_URL=https://lumitrader.lumitechia.com.br/api/backend/trading/events
 LUMITRADER_INGEST_TOKEN=seu_token
-POLL_INTERVAL_SECONDS=3
+ACCOUNT_NUMBER=1512917276
+MT5_TERMINAL_PATH=C:\Users\Administrator\Desktop\MT5 Conta 1\EC Markets MT5 Terminal\terminal64.exe
+POLL_INTERVAL_SECONDS=2
 ```
 
 ## Uso
-
-Teste manual:
 
 ```bat
 run_mt5_reporter.bat
 ```
 
-Auto start apos login do Windows:
+## Regras importantes
 
-```bat
-install_startup.bat
-```
+- a bridge só deve operar a conta definida em `ACCOUNT_NUMBER`
+- o terminal deve corresponder ao mesmo login configurado para essa conta
+- o backend pode bloquear automação, mas a sincronização do estado da conta deve continuar funcional
 
 ## Logs
 
 - `logs\mt5_reporter.out.log`
 - `logs\mt5_reporter.err.log`
-
-## Observacoes
-
-- O MT5 precisa estar aberto e logado na sessao grafica do Windows.
-- A opcao Startup inicia melhor nesse tipo de VPS do que um servico puro de sistema.
