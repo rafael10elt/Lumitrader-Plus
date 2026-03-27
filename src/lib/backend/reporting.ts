@@ -1,7 +1,7 @@
+import { evaluateAutoOpportunity } from "@/lib/backend/auto-trader";
 import { toCsv, toHtml } from "@/lib/backend/formatters";
 import { sendReportToN8n } from "@/lib/backend/n8n";
-import { generateAiSummary, validateTradeOpportunity } from "@/lib/backend/openai";
-import { evaluateAutoOpportunity } from "@/lib/backend/auto-trader";
+import { decideTradeOpportunity, generateAiSummary } from "@/lib/backend/openai";
 import { calculateRiskSnapshot } from "@/lib/backend/risk";
 import { hasOpenAiApiKey } from "@/lib/env";
 import {
@@ -17,12 +17,14 @@ import {
   updateAccountAutomationState,
   updateAccountSnapshot,
 } from "@/lib/backend/supabase";
+import type { AutoSignal } from "@/lib/backend/auto-trader";
 import type { ReportPayload, TradingEventPayload } from "@/lib/backend/types";
 
-const aiValidationCache = new Map<string, { expiresAt: number; approved: boolean; summary: string }>();
-const AI_VALIDATION_TTL_MS = 90_000;
+const aiDecisionCache = new Map<string, { expiresAt: number; action: AutoSignal["type"] | "wait"; summary: string; confidence: number | null }>();
+const AI_DECISION_TTL_MS = 90_000;
+const MIN_AI_CONFIDENCE_TO_OPEN = 0.55;
 
-function buildValidationCacheKey(payload: TradingEventPayload, signal: { type: string; lot: number; stopLoss: number; takeProfit: number }) {
+function buildDecisionCacheKey(payload: TradingEventPayload, candidates: AutoSignal[]) {
   return JSON.stringify({
     account: payload.account.number,
     trend: payload.market?.trend ?? null,
@@ -32,10 +34,14 @@ function buildValidationCacheKey(payload: TradingEventPayload, signal: { type: s
     resistance: payload.market?.resistance != null ? Number(payload.market.resistance.toFixed(2)) : null,
     bid: payload.market?.last_bid != null ? Number(payload.market.last_bid.toFixed(2)) : null,
     ask: payload.market?.last_ask != null ? Number(payload.market.last_ask.toFixed(2)) : null,
-    signalType: signal.type,
-    lot: signal.lot,
-    stopLoss: signal.stopLoss,
-    takeProfit: signal.takeProfit,
+    candidates: candidates.map((candidate) => ({
+      type: candidate.type,
+      entryPrice: candidate.entryPrice,
+      lot: candidate.lot,
+      stopLoss: candidate.stopLoss,
+      takeProfit: candidate.takeProfit,
+      riskRewardRatio: candidate.riskRewardRatio,
+    })),
   });
 }
 
@@ -74,7 +80,7 @@ export async function processTradingEvent(payload: TradingEventPayload) {
       dailySummary.lossTotal,
     );
 
-    if (!assessment.signal) {
+    if (assessment.candidates.length === 0) {
       await updateAccountAutomationState(context.account.id, assessment.status, assessment.reason);
       return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: null, aiValidation: assessment.reason };
     }
@@ -87,66 +93,100 @@ export async function processTradingEvent(payload: TradingEventPayload) {
       return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: null, aiValidation: blockedReason };
     }
 
-    if (hasOpenAiApiKey()) {
-      const cacheKey = buildValidationCacheKey(payload, assessment.signal);
-      const cachedDecision = aiValidationCache.get(cacheKey);
-      const now = Date.now();
-
-      if (cachedDecision && cachedDecision.expiresAt > now) {
-        if (!cachedDecision.approved) {
-          await updateAccountAutomationState(context.account.id, "blocked", cachedDecision.summary);
-          return {
-            synced: true,
-            account: payload.account.number,
-            mode: "fast_sync",
-            autoCommand: null,
-            aiValidation: cachedDecision.summary,
-          };
-        }
-
-        await enqueueAutoTradeCommand(context, payload, {
-          ...assessment.signal,
-          rationale: `${assessment.signal.rationale} | IA: ${cachedDecision.summary}`,
-        });
-        await updateAccountAutomationState(context.account.id, "ready", cachedDecision.summary);
-        return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: assessment.signal.type, aiValidation: cachedDecision.summary };
-      }
-
-      const aiDecision = await validateTradeOpportunity({
-        context,
-        payload,
-        signal: assessment.signal,
-        operationsToday,
-      });
-
-      aiValidationCache.set(cacheKey, {
-        expiresAt: now + AI_VALIDATION_TTL_MS,
-        approved: aiDecision.approved,
-        summary: aiDecision.summary,
-      });
-
-      if (!aiDecision.approved) {
-        await updateAccountAutomationState(context.account.id, "blocked", aiDecision.summary);
-        return {
-          synced: true,
-          account: payload.account.number,
-          mode: "fast_sync",
-          autoCommand: null,
-          aiValidation: aiDecision.summary,
-        };
-      }
-
-      await enqueueAutoTradeCommand(context, payload, {
-        ...assessment.signal,
-        rationale: `${assessment.signal.rationale} | IA: ${aiDecision.summary}`,
-      });
-      await updateAccountAutomationState(context.account.id, "ready", aiDecision.summary);
-      return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: assessment.signal.type, aiValidation: aiDecision.summary };
+    if (!hasOpenAiApiKey()) {
+      const reason = "OpenAI indisponivel; automacao automatica fica bloqueada porque a IA e o decisor central.";
+      await updateAccountAutomationState(context.account.id, "blocked", reason);
+      return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: null, aiValidation: reason };
     }
 
-    await enqueueAutoTradeCommand(context, payload, assessment.signal);
-    await updateAccountAutomationState(context.account.id, "ready", "OpenAI indisponivel; usando validacao matematica.");
-    return { synced: true, account: payload.account.number, mode: "fast_sync", autoCommand: assessment.signal.type, aiValidation: "OpenAI indisponivel; usando validacao matematica." };
+    const cacheKey = buildDecisionCacheKey(payload, assessment.candidates);
+    const cachedDecision = aiDecisionCache.get(cacheKey);
+    const now = Date.now();
+    const aiDecision = cachedDecision && cachedDecision.expiresAt > now
+      ? cachedDecision
+      : await (async () => {
+        const freshDecision = await decideTradeOpportunity({
+          context,
+          payload,
+          candidates: assessment.candidates,
+          operationsToday,
+        });
+
+        const cacheValue = {
+          expiresAt: now + AI_DECISION_TTL_MS,
+          action: freshDecision.action,
+          summary: freshDecision.summary,
+          confidence: freshDecision.confidence,
+        };
+
+        aiDecisionCache.set(cacheKey, cacheValue);
+        return cacheValue;
+      })();
+
+    if (aiDecision.action === "wait") {
+      await updateAccountAutomationState(context.account.id, "awaiting", aiDecision.summary);
+      return {
+        synced: true,
+        account: payload.account.number,
+        mode: "fast_sync",
+        autoCommand: null,
+        aiValidation: aiDecision.summary,
+      };
+    }
+
+    if (aiDecision.confidence != null && aiDecision.confidence < MIN_AI_CONFIDENCE_TO_OPEN) {
+      const lowConfidenceReason = `IA viu edge fraco (${aiDecision.confidence.toFixed(2)}); aguardando melhor contexto.`;
+      await updateAccountAutomationState(context.account.id, "awaiting", lowConfidenceReason);
+      return {
+        synced: true,
+        account: payload.account.number,
+        mode: "fast_sync",
+        autoCommand: null,
+        aiValidation: lowConfidenceReason,
+      };
+    }
+
+    const chosenSignal = assessment.candidates.find((candidate) => candidate.type === aiDecision.action) ?? null;
+    if (!chosenSignal) {
+      const invalidDecisionReason = "IA retornou uma acao sem plano matematico correspondente.";
+      await updateAccountAutomationState(context.account.id, "blocked", invalidDecisionReason);
+      return {
+        synced: true,
+        account: payload.account.number,
+        mode: "fast_sync",
+        autoCommand: null,
+        aiValidation: invalidDecisionReason,
+      };
+    }
+
+    const enqueueResult = await enqueueAutoTradeCommand(context, payload, {
+      type: chosenSignal.type,
+      lot: chosenSignal.lot,
+      stopLoss: chosenSignal.stopLoss,
+      takeProfit: chosenSignal.takeProfit,
+      rationale: `${chosenSignal.rationale} | IA: ${aiDecision.summary}`,
+    });
+
+    if (!enqueueResult.enqueued) {
+      await updateAccountAutomationState(context.account.id, "blocked", enqueueResult.reason);
+      return {
+        synced: true,
+        account: payload.account.number,
+        mode: "fast_sync",
+        autoCommand: null,
+        aiValidation: enqueueResult.reason,
+      };
+    }
+
+    const readyReason = `${aiDecision.summary} | ${chosenSignal.type === "open_buy" ? "Compra" : "Venda"} enfileirada com RR ${chosenSignal.riskRewardRatio.toFixed(2)}.`;
+    await updateAccountAutomationState(context.account.id, "ready", readyReason);
+    return {
+      synced: true,
+      account: payload.account.number,
+      mode: "fast_sync",
+      autoCommand: chosenSignal.type,
+      aiValidation: readyReason,
+    };
   }
 
   if (!payload.operation) {
@@ -155,7 +195,7 @@ export async function processTradingEvent(payload: TradingEventPayload) {
 
   const operationPayload = payload.operation;
   const operationId = await recordTradingEvent(context, payload);
-  if (payload.event === "operation_closed") {
+  if (payload.event === "operation_closed" || payload.event === "operation_partially_closed") {
     await refreshDailyStats(context, payload);
   }
   const operationsToday = await countOperationsToday(context.account.id);

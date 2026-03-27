@@ -1,27 +1,23 @@
 import OpenAI from "openai";
 import { getOpenAiApiKey } from "@/lib/env";
+import type { AutoSignal } from "@/lib/backend/auto-trader";
 import type { LoadedContext } from "@/lib/backend/supabase";
 import type { ReportPayload, TradingEventPayload } from "@/lib/backend/types";
 
 const summaryModel = "gpt-5";
-const validationModel = "gpt-5-mini";
+const decisionModel = "gpt-5-mini";
 
-type TradeOpportunityValidationInput = {
+type TradeOpportunityDecisionInput = {
   context: LoadedContext;
   payload: TradingEventPayload;
-  signal: {
-    type: "open_buy" | "open_sell";
-    lot: number;
-    stopLoss: number;
-    takeProfit: number;
-    rationale: string;
-  };
+  candidates: AutoSignal[];
   operationsToday: number;
 };
 
-type TradeOpportunityValidationResult = {
-  approved: boolean;
+type TradeOpportunityDecisionResult = {
+  action: AutoSignal["type"] | "wait";
   summary: string;
+  confidence: number | null;
   request_id: string | null;
   model: string;
 };
@@ -42,16 +38,18 @@ function buildPrompt(report: Omit<ReportPayload, "ai" | "formats">) {
   ].join("\n");
 }
 
-function buildTradeValidationPrompt(input: TradeOpportunityValidationInput) {
+function buildTradeDecisionPrompt(input: TradeOpportunityDecisionInput) {
   const balance = input.payload.account.balance ?? input.context.account.saldo_atual;
   const equity = input.payload.account.equity ?? input.context.account.equity;
   const market = input.payload.market ?? {};
 
   return [
-    "Voce e o comite de validacao do Lumitrader.",
-    "A matematica ja aprovou uma oportunidade. Sua funcao e somente validar se o contexto real do mercado apoia a entrada agora.",
-    "Responda em JSON puro com as chaves: approved (boolean) e summary (string curta, maximo 180 caracteres).",
-    "Aprovacao so quando houver contexto favoravel e coerente com tendencia, RSI, MM20, suporte/resistencia e restricoes do usuario.",
+    "Voce e a mesa de decisao do Lumitrader.",
+    "Os gates duros ja foram aprovados e sao irrevogaveis: conta em PLAY, horario valido, sem meta/perda/limite violados e sem posicao aberta.",
+    "Sua tarefa e decidir se existe oportunidade real AGORA para abrir compra, abrir venda ou nao operar.",
+    "Voce deve ser conservador: prefira wait quando o contexto estiver neutro, conflitado, sem momentum claro ou sem edge suficiente.",
+    "Os planos candidatos ja sao matematicamente validos e respeitam o risco do usuario; sua funcao e escolher open_buy, open_sell ou wait.",
+    "Responda em JSON puro com as chaves: action (open_buy|open_sell|wait), summary (string curta max 180 caracteres), confidence (numero de 0 a 1).",
     JSON.stringify({
       account: {
         number: input.context.account.numero_conta,
@@ -78,28 +76,36 @@ function buildTradeValidationPrompt(input: TradeOpportunityValidationInput) {
         resistance: market.resistance,
         last_bid: market.last_bid,
         last_ask: market.last_ask,
-        notes: market.notes?.slice(0, 6),
+        notes: market.notes?.slice(0, 8),
+        candles: market.candles?.slice(-8),
       },
-      signal: input.signal,
+      candidates: input.candidates,
       operationsToday: input.operationsToday,
     }),
   ].join("\n");
 }
 
-function parseValidationResponse(raw: string): Pick<TradeOpportunityValidationResult, "approved" | "summary"> {
+function parseDecisionResponse(raw: string): Pick<TradeOpportunityDecisionResult, "action" | "summary" | "confidence"> {
   try {
-    const parsed = JSON.parse(raw) as { approved?: boolean; summary?: string };
+    const parsed = JSON.parse(raw) as { action?: string; summary?: string; confidence?: number };
+    const action = parsed.action === "open_buy" || parsed.action === "open_sell" ? parsed.action : "wait";
     return {
-      approved: parsed.approved === true,
+      action,
       summary: typeof parsed.summary === "string" && parsed.summary.trim().length > 0
-        ? parsed.summary.trim()
-        : (parsed.approved === true ? "IA validou a entrada." : "IA rejeitou a entrada por contexto insuficiente."),
+        ? parsed.summary.trim().slice(0, 180)
+        : (action === "wait" ? "IA nao encontrou edge suficiente no momento." : "IA aprovou a entrada."),
+      confidence: typeof parsed.confidence === "number" && Number.isFinite(parsed.confidence)
+        ? Math.max(0, Math.min(1, parsed.confidence))
+        : null,
     };
   } catch {
     const normalized = raw.trim();
+    const lower = normalized.toLowerCase();
+    const action = lower.includes("open_buy") ? "open_buy" : lower.includes("open_sell") ? "open_sell" : "wait";
     return {
-      approved: /^\s*\{?\s*"?approved"?\s*:\s*true/i.test(normalized),
+      action,
       summary: normalized.slice(0, 180) || "Resposta invalida da IA.",
+      confidence: null,
     };
   }
 }
@@ -118,19 +124,20 @@ export async function generateAiSummary(report: Omit<ReportPayload, "ai" | "form
   };
 }
 
-export async function validateTradeOpportunity(input: TradeOpportunityValidationInput): Promise<TradeOpportunityValidationResult> {
+export async function decideTradeOpportunity(input: TradeOpportunityDecisionInput): Promise<TradeOpportunityDecisionResult> {
   const client = getClient();
   const response = await client.responses.create({
-    model: validationModel,
-    input: buildTradeValidationPrompt(input),
+    model: decisionModel,
+    input: buildTradeDecisionPrompt(input),
   });
 
-  const parsed = parseValidationResponse(response.output_text);
+  const parsed = parseDecisionResponse(response.output_text);
 
   return {
-    approved: parsed.approved,
+    action: parsed.action,
     summary: parsed.summary,
+    confidence: parsed.confidence,
     request_id: response._request_id ?? null,
-    model: validationModel,
+    model: decisionModel,
   };
 }

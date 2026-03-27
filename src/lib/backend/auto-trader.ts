@@ -3,21 +3,25 @@ import type { TradingEventPayload } from "@/lib/backend/types";
 
 export type AutoSignal = {
   type: "open_buy" | "open_sell";
+  entryPrice: number;
   lot: number;
   stopLoss: number;
   takeProfit: number;
+  riskRewardRatio: number;
   rationale: string;
 };
 
 export type AutoOpportunityAssessment = {
-  signal: AutoSignal | null;
-  status: "blocked" | "ready";
+  candidates: AutoSignal[];
+  status: "blocked" | "ready" | "awaiting";
   reason: string;
 };
 
 const LOT_STEP = 0.01;
 const MIN_AUTO_LOT = 0.01;
 const PRICE_VALUE_PER_LOT = 100;
+const MIN_RISK_REWARD = 1.25;
+const DEFAULT_TARGET_MULTIPLIER = 1.8;
 
 function roundPrice(value: number) {
   return Number(value.toFixed(2));
@@ -27,8 +31,8 @@ function roundLot(value: number) {
   return Number((Math.floor(value / LOT_STEP) * LOT_STEP).toFixed(2));
 }
 
-function computeRiskDistance(entry: number, fallback: number | null | undefined) {
-  const structuralDistance = fallback != null ? Math.abs(entry - fallback) : 0;
+function computeRiskDistance(entry: number, reference: number | null | undefined) {
+  const structuralDistance = reference != null ? Math.abs(entry - reference) : 0;
   const minimumDistance = Math.max(entry * 0.001, 2);
   return Math.max(structuralDistance, minimumDistance);
 }
@@ -81,17 +85,133 @@ function computeDynamicLot(args: {
 
 function blocked(reason: string): AutoOpportunityAssessment {
   return {
-    signal: null,
+    candidates: [],
     status: "blocked",
     reason,
   };
 }
 
-function ready(signal: AutoSignal, reason: string): AutoOpportunityAssessment {
+function awaiting(reason: string): AutoOpportunityAssessment {
   return {
-    signal,
+    candidates: [],
+    status: "awaiting",
+    reason,
+  };
+}
+
+function ready(candidates: AutoSignal[], reason: string): AutoOpportunityAssessment {
+  return {
+    candidates,
     status: "ready",
     reason,
+  };
+}
+
+function buildBuyCandidate(args: {
+  market: NonNullable<TradingEventPayload["market"]>;
+  balance: number;
+  equity: number;
+  dailyLossLimit: number;
+  riskPercent: number;
+}) {
+  const entry = args.market.last_ask ?? null;
+  if (entry == null) {
+    return null;
+  }
+
+  const structuralStop = args.market.support != null && args.market.support < entry
+    ? args.market.support
+    : args.market.moving_average_20 != null && args.market.moving_average_20 < entry
+      ? args.market.moving_average_20
+      : null;
+  const riskDistance = computeRiskDistance(entry, structuralStop);
+  const stopLoss = roundPrice(structuralStop != null ? structuralStop : entry - riskDistance);
+  const targetCandidate = args.market.resistance != null && args.market.resistance > entry
+    ? args.market.resistance
+    : entry + (riskDistance * DEFAULT_TARGET_MULTIPLIER);
+  const takeProfit = roundPrice(Math.max(targetCandidate, entry + (riskDistance * MIN_RISK_REWARD)));
+  const effectiveRisk = Math.abs(entry - stopLoss);
+  const effectiveReward = Math.abs(takeProfit - entry);
+  const riskRewardRatio = effectiveRisk > 0 ? Number((effectiveReward / effectiveRisk).toFixed(2)) : 0;
+
+  if (!(stopLoss < entry) || !(takeProfit > entry) || riskRewardRatio < MIN_RISK_REWARD) {
+    return null;
+  }
+
+  const lot = computeDynamicLot({
+    balance: args.balance,
+    equity: args.equity,
+    dailyLossLimit: args.dailyLossLimit,
+    riskPercent: args.riskPercent,
+    stopDistance: effectiveRisk,
+  });
+
+  if (lot == null) {
+    return null;
+  }
+
+  return {
+    type: "open_buy" as const,
+    entryPrice: roundPrice(entry),
+    lot,
+    stopLoss,
+    takeProfit,
+    riskRewardRatio,
+    rationale: `Plano de compra com RR ${riskRewardRatio.toFixed(2)} e lote ${lot.toFixed(2)}.`,
+  };
+}
+
+function buildSellCandidate(args: {
+  market: NonNullable<TradingEventPayload["market"]>;
+  balance: number;
+  equity: number;
+  dailyLossLimit: number;
+  riskPercent: number;
+}) {
+  const entry = args.market.last_bid ?? null;
+  if (entry == null) {
+    return null;
+  }
+
+  const structuralStop = args.market.resistance != null && args.market.resistance > entry
+    ? args.market.resistance
+    : args.market.moving_average_20 != null && args.market.moving_average_20 > entry
+      ? args.market.moving_average_20
+      : null;
+  const riskDistance = computeRiskDistance(entry, structuralStop);
+  const stopLoss = roundPrice(structuralStop != null ? structuralStop : entry + riskDistance);
+  const targetCandidate = args.market.support != null && args.market.support < entry
+    ? args.market.support
+    : entry - (riskDistance * DEFAULT_TARGET_MULTIPLIER);
+  const takeProfit = roundPrice(Math.min(targetCandidate, entry - (riskDistance * MIN_RISK_REWARD)));
+  const effectiveRisk = Math.abs(stopLoss - entry);
+  const effectiveReward = Math.abs(entry - takeProfit);
+  const riskRewardRatio = effectiveRisk > 0 ? Number((effectiveReward / effectiveRisk).toFixed(2)) : 0;
+
+  if (!(stopLoss > entry) || !(takeProfit < entry) || riskRewardRatio < MIN_RISK_REWARD) {
+    return null;
+  }
+
+  const lot = computeDynamicLot({
+    balance: args.balance,
+    equity: args.equity,
+    dailyLossLimit: args.dailyLossLimit,
+    riskPercent: args.riskPercent,
+    stopDistance: effectiveRisk,
+  });
+
+  if (lot == null) {
+    return null;
+  }
+
+  return {
+    type: "open_sell" as const,
+    entryPrice: roundPrice(entry),
+    lot,
+    stopLoss,
+    takeProfit,
+    riskRewardRatio,
+    rationale: `Plano de venda com RR ${riskRewardRatio.toFixed(2)} e lote ${lot.toFixed(2)}.`,
   };
 }
 
@@ -133,19 +253,6 @@ export function evaluateAutoOpportunity(
     return blocked("Regra de ouro ativa: ja existe posicao aberta no MT5.");
   }
 
-  const market = payload.market;
-  const trend = market.trend;
-  const rsi = market.rsi ?? null;
-  const movingAverage20 = market.moving_average_20 ?? null;
-  const support = market.support ?? null;
-  const resistance = market.resistance ?? null;
-  const lastBid = market.last_bid ?? null;
-  const lastAsk = market.last_ask ?? null;
-
-  if (!trend || rsi == null || movingAverage20 == null || lastBid == null || lastAsk == null) {
-    return blocked("Dados de mercado insuficientes para validar setup.");
-  }
-
   if (context.config.limite_operacoes_ativo && context.config.limite_operacoes_diaria != null && operationsToday >= context.config.limite_operacoes_diaria) {
     return blocked("Limite diario de operacoes ja atingido.");
   }
@@ -155,55 +262,38 @@ export function evaluateAutoOpportunity(
     return blocked("Perda diaria restante insuficiente para nova entrada.");
   }
 
-  if (trend === "uptrend" && rsi >= 55 && rsi <= 68 && lastAsk > movingAverage20) {
-    const entry = lastAsk;
-    const riskDistance = computeRiskDistance(entry, support);
-    const stopLoss = roundPrice(support != null && support < entry ? support : entry - riskDistance);
-    const takeProfit = roundPrice(resistance != null && resistance > entry ? resistance : entry + riskDistance * 2);
-    const lot = computeDynamicLot({
-      balance: payload.account.balance ?? 0,
-      equity: payload.account.equity ?? payload.account.balance ?? 0,
-      dailyLossLimit: context.config.perda_maxima_diaria,
-      riskPercent: context.config.risco_por_operacao,
-      stopDistance: Math.abs(entry - stopLoss),
-    });
+  const market = payload.market;
+  const trend = market.trend ?? null;
+  const rsi = market.rsi ?? null;
+  const movingAverage20 = market.moving_average_20 ?? null;
+  const lastBid = market.last_bid ?? null;
+  const lastAsk = market.last_ask ?? null;
 
-    if (lot != null && stopLoss < entry && takeProfit > entry) {
-      const signal: AutoSignal = {
-        type: "open_buy",
-        lot,
-        stopLoss,
-        takeProfit,
-        rationale: `Signal uptrend RSI ${rsi.toFixed(1)} above MA20 | risk ${(context.config.risco_por_operacao * 100).toFixed(2)}% | lot ${lot.toFixed(2)}`,
-      };
-      return ready(signal, `Setup matematico aprovado para compra com lote ${lot.toFixed(2)}.`);
-    }
+  if (!trend || rsi == null || movingAverage20 == null || lastBid == null || lastAsk == null) {
+    return blocked("Dados de mercado insuficientes para a IA decidir o setup.");
   }
 
-  if (trend === "downtrend" && rsi >= 32 && rsi <= 45 && lastBid < movingAverage20) {
-    const entry = lastBid;
-    const riskDistance = computeRiskDistance(entry, resistance);
-    const stopLoss = roundPrice(resistance != null && resistance > entry ? resistance : entry + riskDistance);
-    const takeProfit = roundPrice(support != null && support < entry ? support : entry - riskDistance * 2);
-    const lot = computeDynamicLot({
-      balance: payload.account.balance ?? 0,
-      equity: payload.account.equity ?? payload.account.balance ?? 0,
-      dailyLossLimit: context.config.perda_maxima_diaria,
-      riskPercent: context.config.risco_por_operacao,
-      stopDistance: Math.abs(stopLoss - entry),
-    });
+  const balance = payload.account.balance ?? 0;
+  const equity = payload.account.equity ?? balance;
+  const candidateArgs = {
+    market,
+    balance,
+    equity,
+    dailyLossLimit: context.config.perda_maxima_diaria,
+    riskPercent: context.config.risco_por_operacao,
+  };
 
-    if (lot != null && stopLoss > entry && takeProfit < entry) {
-      const signal: AutoSignal = {
-        type: "open_sell",
-        lot,
-        stopLoss,
-        takeProfit,
-        rationale: `Signal downtrend RSI ${rsi.toFixed(1)} below MA20 | risk ${(context.config.risco_por_operacao * 100).toFixed(2)}% | lot ${lot.toFixed(2)}`,
-      };
-      return ready(signal, `Setup matematico aprovado para venda com lote ${lot.toFixed(2)}.`);
-    }
+  const candidates = [
+    buildBuyCandidate(candidateArgs),
+    buildSellCandidate(candidateArgs),
+  ].filter((candidate): candidate is AutoSignal => candidate !== null);
+
+  if (candidates.length === 0) {
+    return awaiting("Sem estrutura matematica valida no momento.");
   }
 
-  return blocked("Sem oportunidade matematica valida no momento.");
+  return ready(
+    candidates,
+    `Gates duros aprovados em ${context.config.ativo}/${context.config.timeframe}; IA pode decidir entre ${candidates.map((candidate) => candidate.type).join(" e ")}.`,
+  );
 }

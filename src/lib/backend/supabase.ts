@@ -555,7 +555,7 @@ export async function reconcileOpenOperations(accountId: string, openPositionTic
       const ticket = row.validacao_ia && typeof row.validacao_ia === "object" && typeof row.validacao_ia.ticket === "string"
         ? row.validacao_ia.ticket
         : null;
-      return !ticket || !normalizedTickets.includes(ticket);
+      return ticket != null && !normalizedTickets.includes(ticket);
     })
     .map((row) => row.id);
 
@@ -612,8 +612,18 @@ export async function enqueueAutoTradeCommand(
   const adminClient = createAdminClient();
   const executionState = await loadAccountExecutionState(context.account.id);
 
-  if (executionState.hasOpenPosition || executionState.hasPendingCommand) {
-    return;
+  if (executionState.hasOpenPosition) {
+    return {
+      enqueued: false,
+      reason: "Automacao bloqueada: ja existe posicao aberta no banco.",
+    };
+  }
+
+  if (executionState.hasPendingCommand) {
+    return {
+      enqueued: false,
+      reason: "Automacao bloqueada: existe comando pendente ou em processamento.",
+    };
   }
 
   const { error } = await adminClient.from("comandos_trading").insert({
@@ -633,14 +643,21 @@ export async function enqueueAutoTradeCommand(
   });
 
   if (error) {
+    if (error.code === "23505") {
+      return {
+        enqueued: false,
+        reason: "Automacao bloqueada: ja existe comando de abertura ativo para esta conta.",
+      };
+    }
+
     throw new Error(error.message);
   }
+
+  return {
+    enqueued: true,
+    reason: "Comando automatico enfileirado com sucesso.",
+  };
 }
-
-
-
-
-
 
 export async function loadDailyOperationSummary(accountId: string) {
   const adminClient = createAdminClient();
@@ -669,3 +686,6 @@ export async function loadDailyOperationSummary(accountId: string) {
     lossTotal,
   };
 }
+
+
+

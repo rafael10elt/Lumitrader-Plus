@@ -16,8 +16,8 @@ A proposta ideal do projeto e:
 - `src/app/api/backend/trading/events`: recebe eventos do bridge
 - `src/lib/backend/reporting.ts`: orquestra sincronizacao, automacao, IA e relatorios
 - `src/lib/backend/supabase.ts`: contexto, persistencia, reconciliacao, enfileiramento e estatisticas
-- `src/lib/backend/auto-trader.ts`: motor matematico de oportunidade e sizing
-- `src/lib/backend/openai.ts`: resumos de operacao e validacao IA de oportunidade
+- `src/lib/backend/auto-trader.ts`: motor matematico de gates duros, planos de risco e candidatos de entrada
+- `src/lib/backend/openai.ts`: decisao IA de oportunidade e resumos de operacao
 - `src/app/dashboard/page.tsx`: resolve os dados do dashboard no servidor
 - `src/components/dashboard/dashboard-realtime-fixed.tsx`: painel operacional em tempo real
 
@@ -26,6 +26,7 @@ A proposta ideal do projeto e:
 - comandos de abertura nao devem passar se houver posicao aberta ou comando pendente
 - parcial/fechamento exigem ticket valido para evitar atingir a operacao errada
 - painel deve refletir estado real automaticamente, sem depender de F5
+- a IA so pode decidir quando a conta estiver em PLAY, dentro da janela operacional e sem violar limites diarios
 
 ## Implementacoes concluidas
 ### Sincronizacao e operacao
@@ -34,6 +35,7 @@ A proposta ideal do projeto e:
 - parcial/fechamento protegidos por ticket de referencia
 - sincronizacao mais frequente do bridge
 - dashboard com polling de seguranca, foco/visibility refresh e fallback por tickets abertos no snapshot
+- a bridge continua sincronizando mesmo com a automacao pausada; `PLAY/PAUSE` agora controla a IA, nao a telemetria
 
 ### Dashboard
 - troca de conta corrigida
@@ -41,33 +43,42 @@ A proposta ideal do projeto e:
 - timeline ajustada para exibir cerca de 10 registros com rolagem
 - reorganizacao do layout para reduzir espacos vazios
 - melhorias de responsividade para mobile, especialmente nos containers e no grafico
+- status da IA trader reflete `Pronta`, `Bloqueada` ou `Aguardando` via `automation_status`
 
 ### Risco e sizing
 - risco por operacao passou a ser parametro persistido em `ativos_config`
 - dashboard resolve e exibe `risco_por_operacao`
 - bridge recebe `risco_por_operacao`
 - auto trader deixou de usar lote fixo e passou a calcular lote dinamicamente por saldo, perda diaria restante e distancia do stop
+- candidatos de compra e venda agora sao montados matematicamente com RR minimo antes de chegar na IA
 
 ### IA
 - IA continua gerando resumo pos-operacao
-- validacao IA leve foi adicionada ao fluxo de `account_sync`, sendo chamada apenas quando a matematica ja encontrou uma oportunidade valida
+- a IA agora e o decisor central da oportunidade: depois dos gates duros e da validacao matematica, ela escolhe `open_buy`, `open_sell` ou `wait`
 - cache curto em memoria evita chamar a IA repetidamente para o mesmo cenario
+- se a OpenAI estiver indisponivel, a automacao automatica fica bloqueada em vez de operar sem IA
+
+### Integridade do backend
+- comandos de abertura ganharam trava unica por conta no banco para impedir dupla fila sob concorrencia
+- fechamento parcial agora atualiza estatisticas diarias
+- reconciliacao ficou menos agressiva com operacoes sem ticket para evitar fechar linha valida por engano
 
 ## Pendencias principais para chegar perto do ideal
-- evoluir de validacao IA para decisao IA mais contextual, sem abandonar o gate matematico
-- enriquecer o modelo de risco por ativo/simbolo (o fator atual ainda e simplificado)
-- melhorar a memoria operacional do sistema para cooldowns e contexto persistente entre sinais
-- ampliar a observabilidade do motivo de cada entrada recusada ou aprovada no painel/admin
-- continuar limpando estados legados e casos extremos de reconciliacao
+- enriquecer ainda mais o contexto enviado para a IA com memoria operacional persistente entre sinais
+- refinar o modelo de risco por simbolo/ativo (o fator atual ainda e simplificado)
+- ampliar a observabilidade administrativa dos motivos de bloqueio/aprovacao e historico de decisoes IA
+- continuar limpando estados legados e casos extremos de reconciliacao antiga
+- homologar a migration da trava unica em todos os ambientes Supabase
 
 ## Convencoes uteis
 - `risco_por_operacao` e salvo em decimal no banco (`0.01 = 1%`)
 - no dashboard o usuario ve e edita isso em percentual
-- `account_sync` deve ser rapido; IA so entra quando existe oportunidade matematica
+- `account_sync` deve ser rapido; IA so entra quando gates duros e estrutura matematica aprovam o cenario
 - o painel deve priorizar dados reais do MT5 quando houver discrepancia entre banco e sincronizacao recente
 
 ## Atualizacao mais recente
-- lote automatico dinamico por risco implementado
-- validacao IA para oportunidades automaticas implementada com cache curto
-- diario tecnico criado para servir como memoria do projeto
-- gating operacional para IA reforcado: so valida oportunidade em PLAY, dentro da janela operacional e sem limites diarios atingidos
+- sincronizacao da bridge desacoplada de `sistema_ligado`
+- trava unica no banco para comandos de abertura ativos
+- enum de comandos preparada para `partial_close_position`
+- fechamento parcial passou a recalcular estatisticas
+- IA promovida a decisor central entre `buy`, `sell` e `wait` apos gates duros e planos matematicos

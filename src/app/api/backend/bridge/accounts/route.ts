@@ -34,7 +34,6 @@ export async function GET(request: Request) {
     `)
     .eq("usuarios.acesso_ativo", true)
     .eq("licencas.status", "ativa")
-    .eq("configuracoes_sessao.sistema_ligado", true)
     .gte("licencas.data_expiracao", new Date().toISOString().slice(0, 10));
 
   if (error) {
