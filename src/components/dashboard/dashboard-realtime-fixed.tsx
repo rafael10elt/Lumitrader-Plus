@@ -291,6 +291,7 @@ export function DashboardRealtimeFixed({
       .channel(`lumitrader-account-${selectedAccountId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "contas_trading", filter: `id=eq.${selectedAccountId}` }, () => { void refreshSnapshot(); })
       .on("postgres_changes", { event: "*", schema: "public", table: "configuracoes_sessao", filter: `conta_trading_id=eq.${selectedAccountId}` }, () => { void refreshSnapshot(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "ativos_config", filter: `conta_trading_id=eq.${selectedAccountId}` }, () => { void refreshSnapshot(); })
       .on("postgres_changes", { event: "*", schema: "public", table: "estatisticas", filter: `conta_trading_id=eq.${selectedAccountId}` }, () => { void refreshSnapshot(); })
       .on("postgres_changes", { event: "*", schema: "public", table: "operacoes", filter: `conta_trading_id=eq.${selectedAccountId}` }, () => { void refreshSnapshot(); })
       .on("postgres_changes", { event: "*", schema: "public", table: "licencas", filter: `conta_trading_id=eq.${selectedAccountId}` }, () => { void refreshSnapshot(); })
@@ -310,6 +311,11 @@ export function DashboardRealtimeFixed({
     requestRefresh();
 
     const interval = window.setInterval(requestRefresh, 2500);
+    const routerInterval = window.setInterval(() => {
+      startTransition(() => {
+        router.refresh();
+      });
+    }, 8000);
     const handleFocus = () => requestRefresh();
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
@@ -322,10 +328,11 @@ export function DashboardRealtimeFixed({
 
     return () => {
       window.clearInterval(interval);
+      window.clearInterval(routerInterval);
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [refreshSnapshot, selectedAccountId]);
+  }, [refreshSnapshot, router, selectedAccountId, startTransition]);
 
   const runAction = useEffectEvent(async (action: (formData: FormData) => Promise<void>, formData: FormData, successTitle: string, successDetail?: string) => {
     setIsSubmitting(true);
@@ -812,6 +819,7 @@ function ToastCard({ toast }: { toast: DashboardToast }) {
     </div>
   );
 }
+
 
 
 
