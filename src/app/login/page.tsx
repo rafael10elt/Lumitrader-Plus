@@ -1,6 +1,7 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { login, signup } from "@/app/login/actions";
+import { SubmitButton } from "@/app/login/submit-button";
 import { createClient } from "@/lib/supabase/server";
 
 type LoginPageProps = {
@@ -49,25 +50,25 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
                 Acesso protegido
               </p>
               <h2 className="mt-3 text-4xl font-semibold leading-tight sm:text-5xl">
-                Painel operacional com autenticação real, bridge MT5 e validação por IA.
+                Painel operacional com autenticacao real, bridge MT5 e validacao por IA.
               </h2>
               <p className="mt-5 max-w-xl text-base leading-7 text-slate-300">
-                O login protege o acesso ao dashboard, mantém sessão SSR com Supabase e libera o fluxo operacional da conta licenciada vinculada ao usuário.
+                O login protege o acesso ao dashboard, mantem sessao SSR com Supabase e libera o fluxo operacional da conta licenciada vinculada ao usuario.
               </p>
             </div>
 
             <div className="mt-10 grid gap-4 sm:grid-cols-3">
               <FeatureCard
                 title="Auth SSR"
-                description="Sessão segura com Supabase, cookies protegidos e páginas fechadas por usuário autenticado."
+                description="Sessao segura com Supabase, cookies protegidos e paginas fechadas por usuario autenticado."
               />
               <FeatureCard
                 title="Painel Vivo"
-                description="Dashboard ligado a conta MT5, comandos operacionais, estatísticas e leitura de mercado."
+                description="Dashboard ligado a conta MT5, comandos operacionais, estatisticas e leitura de mercado."
               />
               <FeatureCard
                 title="IA Assistida"
-                description="Automação com travas de risco, validação contextual por IA e sincronização em tempo real."
+                description="Automacao com travas de risco, validacao contextual por IA e sincronizacao em tempo real."
               />
             </div>
 
@@ -77,13 +78,13 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
               </p>
               <ul className="mt-4 grid gap-3 text-sm text-slate-200">
                 <li className="rounded-[20px] border border-white/8 bg-white/4 px-4 py-3">
-                  Bridge MT5 com sincronização de saldo, equity, posições e comandos.
+                  Bridge MT5 com sincronizacao de saldo, equity, posicoes e comandos.
                 </li>
                 <li className="rounded-[20px] border border-white/8 bg-white/4 px-4 py-3">
-                  Dashboard com polling de segurança e atualização via Supabase Realtime.
+                  Dashboard com polling de seguranca e atualizacao via Supabase Realtime.
                 </li>
                 <li className="rounded-[20px] border border-white/8 bg-white/4 px-4 py-3">
-                  Regras de risco, posição única por conta e validação operacional por IA.
+                  Regras de risco, posicao unica por conta e validacao operacional por IA.
                 </li>
               </ul>
             </div>
@@ -116,41 +117,31 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           ) : null}
 
           <div className="mt-6 grid gap-5">
-            <form className="rounded-[28px] border border-white/8 bg-white/4 p-5">
+            <form action={login} className="rounded-[28px] border border-white/8 bg-white/4 p-5">
               <p className="text-lg font-semibold">Entrar</p>
               <div className="mt-4 grid gap-4">
                 <AuthField label="Email" name="email" type="email" placeholder="voce@lumitrader.com" />
                 <AuthField label="Senha" name="password" type="password" placeholder="Sua senha" />
               </div>
-              <button
-                formAction={login}
-                className="mt-5 flex w-full items-center justify-center rounded-[20px] bg-linear-to-r from-lime-500 via-lime-400 to-emerald-400 px-4 py-3 text-base font-semibold text-slate-950 transition-transform hover:-translate-y-0.5"
-              >
-                Acessar dashboard
-              </button>
+              <SubmitButton idleLabel="Acessar dashboard" pendingLabel="Entrando..." tone="primary" />
             </form>
 
-            <form className="rounded-[28px] border border-white/8 bg-white/4 p-5">
+            <form action={signup} className="rounded-[28px] border border-white/8 bg-white/4 p-5">
               <p className="text-lg font-semibold">Criar conta</p>
               <div className="mt-4 grid gap-4">
                 <AuthField label="Nome do cliente" name="name" type="text" placeholder="Seu nome" />
                 <AuthField label="Email" name="email" type="email" placeholder="voce@lumitrader.com" />
                 <AuthField label="Senha" name="password" type="password" placeholder="Crie uma senha" />
               </div>
-              <button
-                formAction={signup}
-                className="mt-5 flex w-full items-center justify-center rounded-[20px] border border-cyan-400/30 bg-cyan-400/10 px-4 py-3 text-base font-semibold text-cyan-100 transition-colors hover:bg-cyan-400/16"
-              >
-                Criar acesso seguro
-              </button>
+              <SubmitButton idleLabel="Criar acesso seguro" pendingLabel="Criando conta..." tone="secondary" />
             </form>
           </div>
 
           <p className="mt-6 text-sm leading-6 text-slate-400">
-            Após confirmar o email, o usuário autenticado passa a acessar apenas o dashboard e os recursos permitidos pelo vínculo com sua conta e licença.
+            Apos confirmar o email, o usuario autenticado passa a acessar apenas o dashboard e os recursos permitidos pelo vinculo com sua conta e licenca.
           </p>
           <p className="mt-3 text-sm text-slate-500">
-            O acesso operacional também depende do cadastro da conta MT5, licença ativa e parâmetros configurados no ambiente administrativo.
+            O acesso operacional tambem depende do cadastro da conta MT5, licenca ativa e parametros configurados no ambiente administrativo.
           </p>
           <div className="mt-6 text-sm text-slate-400">
             Se precisar voltar para o inicio, use <Link href="/" className="text-lime-300">/</Link>.
